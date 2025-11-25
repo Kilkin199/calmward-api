@@ -1,5 +1,5 @@
 // api/index.js
-// Servidor IA para Calmward usando Ollama
+// Servidor IA para Calmward usando Groq (Llama 3.1 en la nube)
 
 const express = require("express");
 const cors = require("cors");
@@ -10,19 +10,13 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// Donde está Ollama
-// - En local:        http://127.0.0.1:11434
-// - En un VPS/túnel: la URL pública que exponga tu Ollama
-const OLLAMA_BASE_URL =
-  process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
-
-// Modelo de Ollama (ajústalo a lo que tengas descargado)
-const OLLAMA_MODEL =
-  process.env.OLLAMA_MODEL || "llama3.1:8b";
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
 // ----- PROMPTS DEL MODELO -----
 
-const SYSTEM_LISTEN = 
+const SYSTEM_LISTEN = `
 Eres una inteligencia artificial de apoyo emocional llamada Calmward.
 Tu función es hablar con el usuario como un amigo o amiga de confianza,
 con mucha empatía, calidez y sin juicios.
@@ -34,9 +28,9 @@ REGLAS IMPORTANTES:
 - Usa un tono cercano, en español, sencillo, sin tecnicismos.
 - No minimices el problema ("no es para tanto", "hay gente peor").
 - Si detectas riesgo serio (ideas de hacerse daño, etc.), anima a la persona a buscar ayuda profesional o de emergencia, sin dar instrucciones médicas.
-;
+`;
 
-const SYSTEM_HELP = 
+const SYSTEM_HELP = `
 Eres Calmward, una IA de apoyo emocional que ayuda a ordenar ideas con calma.
 
 REGLAS:
@@ -45,7 +39,7 @@ REGLAS:
 - NO eres médico ni psicólogo, no hagas diagnósticos ni des recomendaciones médicas.
 - No des listas gigantes de tareas; como máximo 1 o 2 pasos pequeños, muy concretos y realistas.
 - Si aparece algo muy grave (autolesiones, suicidio, violencia), anima a la persona a pedir ayuda profesional o de emergencia.
-;
+`;
 
 // Limpia historial que pueda venir del cliente
 function normalizeHistory(history) {
@@ -63,8 +57,9 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "calmward-api",
-    provider: "ollama",
-    model: OLLAMA_MODEL,
+    provider: "groq",
+    model: GROQ_MODEL,
+    hasApiKey: !!GROQ_API_KEY,
   });
 });
 
@@ -77,6 +72,12 @@ app.get("/", (_req, res) => {
 // }
 app.post("/ai/talk", async (req, res) => {
   try {
+    if (!GROQ_API_KEY) {
+      return res.status(500).json({
+        error: "Falta GROQ_API_KEY en el servidor. Configúrala en Render.",
+      });
+    }
+
     const { message, mode = "solo_escuchame", history = [] } = req.body || {};
 
     if (!message || typeof message !== "string") {
@@ -95,32 +96,33 @@ app.post("/ai/talk", async (req, res) => {
     ];
 
     const payload = {
-      model: OLLAMA_MODEL,
-      stream: false,
+      model: GROQ_MODEL,
       messages,
+      temperature: 0.7,
     };
 
-    const ollamaRes = await fetch(${OLLAMA_BASE_URL}/api/chat, {
+    const groqRes = await fetch(GROQ_API_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(payload),
     });
 
-    if (!ollamaRes.ok) {
-      const text = await ollamaRes.text().catch(() => "");
-      console.error("Error Ollama:", ollamaRes.status, text);
+    if (!groqRes.ok) {
+      const text = await groqRes.text().catch(() => "");
+      console.error("Error Groq:", groqRes.status, text);
       return res.status(500).json({
-        error: "No se pudo obtener respuesta de Calmward (Ollama).",
-        status: ollamaRes.status,
+        error: "No se pudo obtener respuesta de Calmward (Groq).",
+        status: groqRes.status,
       });
     }
 
-    const data = await ollamaRes.json().catch(() => ({}));
+    const data = await groqRes.json().catch(() => ({}));
 
     const replyText =
-      data?.message?.content ??
-      data?.response ??
-      data?.text ??
+      data?.choices?.[0]?.message?.content ??
       "No he podido generar una respuesta ahora mismo.";
 
     return res.json({ reply: replyText });
@@ -128,13 +130,12 @@ app.post("/ai/talk", async (req, res) => {
     console.error("Error en /ai/talk:", err);
     return res.status(500).json({
       error:
-        "Ha habido un problema al hablar con el modelo. Revisa la URL de Ollama o inténtalo más tarde.",
+        "Ha habido un problema al hablar con el modelo. Inténtalo de nuevo en unos segundos.",
     });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(Calmward API (Ollama) escuchando en puerto );
-  console.log(? OLLAMA_BASE_URL = );
-  console.log(? OLLAMA_MODEL    = );
+  console.log(`Calmward API (Groq) escuchando en puerto ${PORT}`);
+  console.log(`? GROQ_MODEL = ${GROQ_MODEL}`);
 });
