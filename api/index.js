@@ -4,6 +4,10 @@
 const express = require("express");
 const cors = require("cors");
 
+// Polyfill de fetch para Node en Render (por si no está definido)
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -64,15 +68,10 @@ app.get("/", (_req, res) => {
 });
 
 // ---------- POST /ai/talk ----------
-// Body esperado:
-// {
-//   "message": "texto del usuario",
-//   "mode": "solo_escuchame" | "ayudame_a_ordenar",
-//   "history": [ { role: "user"|"assistant", content: "..." }, ... ]  (opcional)
-// }
 app.post("/ai/talk", async (req, res) => {
   try {
     if (!GROQ_API_KEY) {
+      console.error("Falta GROQ_API_KEY en el servidor");
       return res.status(500).json({
         error: "Falta GROQ_API_KEY en el servidor. Configúrala en Render.",
       });
