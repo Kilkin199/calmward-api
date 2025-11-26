@@ -35,15 +35,25 @@ const { width } = Dimensions.get("window");
 
 // ---------- AUTENTICACIÓN / CONTEXTO ----------
 
+type UserGender = "male" | "female" | "other";
+
 type AuthContextType = {
   isLogged: boolean;
   userEmail: string | null;
+  userName: string | null;
+  userGender: UserGender | null;
+  userCountry: string | null;
   isSponsor: boolean;
   sessionTimeoutMinutes: number;
   login: (
     email: string,
     token: string,
-    isSponsorFromApi?: boolean
+    isSponsorFromApi?: boolean,
+    profile?: {
+      name?: string | null;
+      gender?: UserGender | null;
+      country?: string | null;
+    }
   ) => Promise<void>;
   logout: () => Promise<void>;
   setSponsor: (value: boolean) => Promise<void>;
@@ -53,6 +63,9 @@ type AuthContextType = {
 const AuthContext = React.createContext<AuthContextType>({
   isLogged: false,
   userEmail: null,
+  userName: null,
+  userGender: null,
+  userCountry: null,
   isSponsor: false,
   sessionTimeoutMinutes: 30,
   login: async () => {},
@@ -133,10 +146,28 @@ function AppFooter() {
 function AuthScreen({ navigation }: any) {
   const { login } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
+
+  const [name, setName] = useState("");
+  const [gender, setGender] = useState<UserGender>("other");
+  const [country, setCountry] = useState("");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function genderLabel(g: UserGender) {
+    if (g === "male") return "Hombre";
+    if (g === "female") return "Mujer";
+    return "Otro / Prefiero no decirlo";
+  }
+
+  function handleForgotPassword() {
+    Alert.alert(
+      "Recuperar contraseña",
+      "Pronto podrás restablecer tu contraseña desde tu correo directamente desde aquí."
+    );
+  }
 
   async function handleSubmit() {
     setError(null);
@@ -146,11 +177,23 @@ function AuthScreen({ navigation }: any) {
       return;
     }
 
-    if (!API_BASE_URL) {
-      setError(
-        "La API de Calmward no está configurada. Revisa API_BASE_URL en config.ts."
-      );
-      return;
+    if (mode === "register") {
+      if (!name.trim()) {
+        setError("Escribe tu nombre.");
+        return;
+      }
+      if (!country.trim()) {
+        setError("Indica tu país.");
+        return;
+      }
+      if (password.length < 10) {
+        setError("La contraseña debe tener al menos 10 caracteres.");
+        return;
+      }
+      if (!/[A-ZÁÉÍÓÚÑ]/.test(password)) {
+        setError("La contraseña debe incluir al menos una letra mayúscula.");
+        return;
+      }
     }
 
     setLoading(true);
@@ -159,54 +202,74 @@ function AuthScreen({ navigation }: any) {
       const endpoint =
         mode === "login" ? "/auth/login" : "/auth/register-and-login";
 
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+      let token = "demo-token";
+      let isSponsorFromApi: boolean | undefined = undefined;
 
-      if (!res.ok) {
-        let msg =
-          "No se ha podido iniciar sesión. Revisa correo y contraseña o vuelve a intentarlo.";
+      if (API_BASE_URL) {
         try {
-          const data = await res.json();
-          if (data && typeof data.error === "string" && data.error.trim()) {
-            msg = data.error.trim();
+          const payload: any = { email, password };
+          if (mode === "register") {
+            payload.name = name.trim();
+            payload.gender = gender;
+            payload.country = country.trim();
           }
-        } catch {
-          // ignoramos JSON inválido
+
+          const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          if (!res.ok) {
+            let msg =
+              "No se ha podido iniciar sesión. Revisa correo y contraseña o vuelve a intentarlo.";
+            try {
+              const data = await res.json();
+              if (
+                data &&
+                typeof data.error === "string" &&
+                data.error.trim()
+              ) {
+                msg = data.error.trim();
+              }
+            } catch {
+              // JSON inválido, usamos el mensaje por defecto
+            }
+            setError(msg);
+            return;
+          }
+
+          const data = await res.json();
+
+          if (typeof data.token === "string" && data.token.trim().length > 0) {
+            token = data.token.trim();
+          }
+
+          if (typeof data.isSponsor === "boolean") {
+            isSponsorFromApi = data.isSponsor;
+          }
+        } catch (e) {
+          console.log("Error de red con Calmward API", e);
+          setError(
+            "No se ha podido conectar con el servidor de Calmward. Revisa tu conexión o inténtalo más tarde."
+          );
+          return;
         }
-        setError(msg);
-        return;
       }
 
-      const data = await res.json();
+      const profile =
+        mode === "register"
+          ? {
+              name: name.trim(),
+              gender,
+              country: country.trim(),
+            }
+          : undefined;
 
-      const token =
-        typeof data.token === "string" && data.token.trim().length > 0
-          ? data.token.trim()
-          : null;
-
-      const isSponsorFromApi: boolean | undefined =
-        typeof data.isSponsor === "boolean" ? data.isSponsor : undefined;
-
-      if (!token) {
-        setError(
-          "La API no ha devuelto un token de sesión válido. Habla con el desarrollador del backend."
-        );
-        return;
-      }
-
-      // Actualizamos el contexto; MainNavigation cambiará de Auth -> Root automáticamente.
-      await login(email, token, isSponsorFromApi);
-
-      // IMPORTANTE: no hacemos navigation.replace("Root") aquí.
-      // Cuando isLogged cambie a true, el Stack se recrea y entra en Root.
+      await login(email, token, isSponsorFromApi, profile);
+      // No hacemos navigation.replace aquí: al cambiar isLogged, el Stack mostrará Root.
     } catch (e) {
-      console.log("Error de red con Calmward API", e);
-      setError(
-        "No se ha podido conectar con el servidor de Calmward. Revisa tu conexión o inténtalo más tarde."
-      );
+      setError("No se ha podido iniciar sesión, inténtalo de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -220,9 +283,6 @@ function AuthScreen({ navigation }: any) {
       >
         <View style={styles.authHeaderTop}>
           <Text style={styles.appMiniTitle}>Calmward</Text>
-          <Text style={styles.appMiniTagline}>
-            Respira, escribe, pide ayuda
-          </Text>
         </View>
 
         <View style={styles.authCard}>
@@ -268,7 +328,57 @@ function AuthScreen({ navigation }: any) {
           </View>
 
           <View style={styles.authForm}>
-            <Text style={styles.label}>Correo electrónico</Text>
+            {mode === "register" && (
+              <>
+                <Text style={styles.label}>Nombre</Text>
+                <TextInput
+                  style={styles.input}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Cómo quieres que te llame la app"
+                  placeholderTextColor="#9CA3AF"
+                />
+
+                <Text style={[styles.label, { marginTop: 12 }]}>Género</Text>
+                <View style={styles.genderRow}>
+                  {(["male", "female", "other"] as UserGender[]).map((g) => {
+                    const active = gender === g;
+                    return (
+                      <TouchableOpacity
+                        key={g}
+                        style={[
+                          styles.genderChip,
+                          active && styles.genderChipActive,
+                        ]}
+                        onPress={() => setGender(g)}
+                      >
+                        <Text
+                          style={[
+                            styles.genderChipText,
+                            active && styles.genderChipTextActive,
+                          ]}
+                        >
+                          {genderLabel(g)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[styles.label, { marginTop: 12 }]}>País</Text>
+                <TextInput
+                  style={styles.input}
+                  value={country}
+                  onChangeText={setCountry}
+                  placeholder="Ej: España, México, Argentina..."
+                  placeholderTextColor="#9CA3AF"
+                />
+              </>
+            )}
+
+            <Text style={[styles.label, { marginTop: 12 }]}>
+              Correo electrónico
+            </Text>
             <TextInput
               style={styles.input}
               keyboardType="email-address"
@@ -285,9 +395,24 @@ function AuthScreen({ navigation }: any) {
               secureTextEntry
               value={password}
               onChangeText={setPassword}
-              placeholder="••••••••"
+              placeholder={
+                mode === "register"
+                  ? "Mínimo 10 caracteres y una mayúscula"
+                  : "••••••••"
+              }
               placeholderTextColor="#9CA3AF"
             />
+
+            {mode === "login" && (
+              <TouchableOpacity
+                style={styles.forgotPasswordBtn}
+                onPress={handleForgotPassword}
+              >
+                <Text style={styles.forgotPasswordText}>
+                  He olvidado mi contraseña
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -318,8 +443,6 @@ function AuthScreen({ navigation }: any) {
     </SafeAreaView>
   );
 }
-
-
 
 // ---------- TAB: INICIO ----------
 
@@ -532,6 +655,7 @@ type ChatMessage = {
 };
 
 function TalkScreen({ navigation }: any) {
+  const { userName, userGender, userCountry } = useAuth();
   const [mode, setMode] = useState<"listen" | "organize">("listen");
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -609,6 +733,15 @@ function TalkScreen({ navigation }: any) {
         content: m.text,
       }));
 
+      const userProfile =
+        userName || userGender || userCountry
+          ? {
+              name: userName,
+              gender: userGender,
+              country: userCountry,
+            }
+          : undefined;
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -619,6 +752,7 @@ function TalkScreen({ navigation }: any) {
           mode: apiMode,
           message: trimmed,
           history,
+          userProfile,
         }),
         signal: controller.signal,
       });
@@ -894,7 +1028,8 @@ function DayScreen({ navigation }: any) {
 // ---------- PERFIL ----------
 
 function ProfileScreen({ navigation }: any) {
-  const { userEmail, logout, isSponsor } = useAuth();
+  const { userEmail, userName, userGender, userCountry, logout, isSponsor } =
+    useAuth();
 
   async function handleLogout() {
     await logout();
@@ -906,6 +1041,13 @@ function ProfileScreen({ navigation }: any) {
     parentNav.navigate("SponsorStats");
   }
 
+  function genderLabel() {
+    if (userGender === "male") return "Hombre";
+    if (userGender === "female") return "Mujer";
+    if (userGender === "other") return "Otro / Prefiero no decirlo";
+    return "No indicado";
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
@@ -913,7 +1055,16 @@ function ProfileScreen({ navigation }: any) {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Perfil</Text>
           {userEmail ? (
-            <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
+            <>
+              <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
+              <Text style={styles.sectionBody}>
+                Nombre: {userName || "No indicado"}
+              </Text>
+              <Text style={styles.sectionBody}>Género: {genderLabel()}</Text>
+              <Text style={styles.sectionBody}>
+                País: {userCountry || "No indicado"}
+              </Text>
+            </>
           ) : (
             <Text style={styles.sectionBody}>
               No hay sesión activa en este momento.
@@ -1476,6 +1627,9 @@ export default function MainNavigation() {
   const [ready, setReady] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [userGender, setUserGender] = useState<UserGender | null>(null);
+  const [userCountry, setUserCountry] = useState<string | null>(null);
   const [isSponsor, setIsSponsorState] = useState(false);
   const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState(30);
 
@@ -1484,6 +1638,9 @@ export default function MainNavigation() {
       try {
         const token = await AsyncStorage.getItem("calmward_token");
         const email = await AsyncStorage.getItem("calmward_email");
+        const name = await AsyncStorage.getItem("calmward_name");
+        const gender = await AsyncStorage.getItem("calmward_gender");
+        const country = await AsyncStorage.getItem("calmward_country");
         const sponsorFlag = await AsyncStorage.getItem("calmward_is_sponsor");
         const timeoutStr = await AsyncStorage.getItem(
           "calmward_session_timeout_minutes"
@@ -1491,6 +1648,15 @@ export default function MainNavigation() {
 
         setIsLogged(!!token);
         setUserEmail(email);
+        setUserName(name || null);
+
+        if (gender === "male" || gender === "female" || gender === "other") {
+          setUserGender(gender);
+        } else {
+          setUserGender(null);
+        }
+
+        setUserCountry(country || null);
         setIsSponsorState(sponsorFlag === "1");
 
         if (timeoutStr) {
@@ -1502,6 +1668,9 @@ export default function MainNavigation() {
       } catch (e) {
         setIsLogged(false);
         setUserEmail(null);
+        setUserName(null);
+        setUserGender(null);
+        setUserCountry(null);
         setIsSponsorState(false);
         setSessionTimeoutMinutesState(30);
       } finally {
@@ -1528,8 +1697,14 @@ export default function MainNavigation() {
           await AsyncStorage.removeItem("calmward_token");
           await AsyncStorage.removeItem("calmward_email");
           await AsyncStorage.removeItem("calmward_is_sponsor");
+          await AsyncStorage.removeItem("calmward_name");
+          await AsyncStorage.removeItem("calmward_gender");
+          await AsyncStorage.removeItem("calmward_country");
           setIsLogged(false);
           setUserEmail(null);
+          setUserName(null);
+          setUserGender(null);
+          setUserCountry(null);
           setIsSponsorState(false);
         }
       } catch {
@@ -1544,15 +1719,28 @@ export default function MainNavigation() {
     () => ({
       isLogged,
       userEmail,
+      userName,
+      userGender,
+      userCountry,
       isSponsor,
       sessionTimeoutMinutes,
-      login: async (email: string, token: string, sponsorFlag?: boolean) => {
+      login: async (
+        email: string,
+        token: string,
+        sponsorFlag?: boolean,
+        profile?: {
+          name?: string | null;
+          gender?: UserGender | null;
+          country?: string | null;
+        }
+      ) => {
         await AsyncStorage.setItem("calmward_token", token);
         await AsyncStorage.setItem("calmward_email", email);
         await AsyncStorage.setItem(
           "calmward_last_activity",
           String(Date.now())
         );
+
         if (typeof sponsorFlag === "boolean") {
           await AsyncStorage.setItem(
             "calmward_is_sponsor",
@@ -1560,6 +1748,37 @@ export default function MainNavigation() {
           );
           setIsSponsorState(sponsorFlag);
         }
+
+        if (profile) {
+          const safeName = profile.name ? profile.name.trim() : "";
+          const safeCountry = profile.country ? profile.country.trim() : "";
+          const g = profile.gender;
+
+          if (safeName) {
+            await AsyncStorage.setItem("calmward_name", safeName);
+            setUserName(safeName);
+          } else {
+            await AsyncStorage.removeItem("calmward_name");
+            setUserName(null);
+          }
+
+          if (safeCountry) {
+            await AsyncStorage.setItem("calmward_country", safeCountry);
+            setUserCountry(safeCountry);
+          } else {
+            await AsyncStorage.removeItem("calmward_country");
+            setUserCountry(null);
+          }
+
+          if (g === "male" || g === "female" || g === "other") {
+            await AsyncStorage.setItem("calmward_gender", g);
+            setUserGender(g);
+          } else {
+            await AsyncStorage.removeItem("calmward_gender");
+            setUserGender(null);
+          }
+        }
+
         setIsLogged(true);
         setUserEmail(email);
       },
@@ -1568,8 +1787,14 @@ export default function MainNavigation() {
         await AsyncStorage.removeItem("calmward_email");
         await AsyncStorage.removeItem("calmward_is_sponsor");
         await AsyncStorage.removeItem("calmward_last_activity");
+        await AsyncStorage.removeItem("calmward_name");
+        await AsyncStorage.removeItem("calmward_gender");
+        await AsyncStorage.removeItem("calmward_country");
         setIsLogged(false);
         setUserEmail(null);
+        setUserName(null);
+        setUserGender(null);
+        setUserCountry(null);
         setIsSponsorState(false);
       },
       setSponsor: async (value: boolean) => {
@@ -1585,7 +1810,15 @@ export default function MainNavigation() {
         setSessionTimeoutMinutesState(safe);
       },
     }),
-    [isLogged, userEmail, isSponsor, sessionTimeoutMinutes]
+    [
+      isLogged,
+      userEmail,
+      userName,
+      userGender,
+      userCountry,
+      isSponsor,
+      sessionTimeoutMinutes,
+    ]
   );
 
   if (!ready) {
@@ -1637,9 +1870,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   content: {
-  padding: 16,
-  paddingBottom: 32,
-  flexGrow: 1, // 👈 CLAVE: hace que el ScrollView ocupe toda la altura
+    padding: 16,
+    paddingBottom: 32,
+    flexGrow: 1,
   },
   sectionCard: {
     backgroundColor: "#FFFFFF",
@@ -1821,6 +2054,41 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 12,
     color: "#DC2626",
+  },
+  genderRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 4,
+  },
+  genderChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "#F9FAFB",
+  },
+  genderChipActive: {
+    borderColor: "#0EA5E9",
+    backgroundColor: "#E0F2FE",
+  },
+  genderChipText: {
+    fontSize: 12,
+    color: "#4B5563",
+  },
+  genderChipTextActive: {
+    color: "#0369A1",
+    fontWeight: "600",
+  },
+  forgotPasswordBtn: {
+    alignSelf: "flex-end",
+    marginTop: 6,
+  },
+  forgotPasswordText: {
+    fontSize: 12,
+    color: "#0EA5E9",
+    fontWeight: "500",
   },
   // Talk
   modeRow: {
