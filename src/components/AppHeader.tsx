@@ -164,12 +164,11 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        {/* Logo + nombre app */}
+        {/* Logo + nombre app (sin tagline) */}
         <View style={styles.brandRow}>
-          <AppLogo />
+          <AppLogo size="sm" showText={false} />
           <View style={styles.titleBox}>
             <Text style={styles.appName}>Calmward</Text>
-            <Text style={styles.tagline}>Respira, escribe, pide ayuda</Text>
           </View>
         </View>
 
@@ -312,13 +311,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   appName: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  tagline: {
-    fontSize: 12,
-    color: "#6B7280",
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#0EA5E9", // más visible
   },
   actions: {
     flexDirection: "row",
@@ -362,7 +357,7 @@ const styles = StyleSheet.create({
   // menú hamburguesa
   mainMenu: {
     position: "absolute",
-    top: 56,        // debajo del header, para NO tapar iconos
+    top: 56, // debajo del header
     right: 16,
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
@@ -379,7 +374,7 @@ const styles = StyleSheet.create({
   // menú usuario
   userMenu: {
     position: "absolute",
-    top: 56,        // igual, todo el desplegable va debajo del header
+    top: 56,
     right: 16,
     backgroundColor: "#FFFFFF",
     borderRadius: 12,

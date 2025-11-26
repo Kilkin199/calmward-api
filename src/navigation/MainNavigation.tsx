@@ -140,8 +140,16 @@ function AuthScreen({ navigation }: any) {
 
   async function handleSubmit() {
     setError(null);
+
     if (!email || !password) {
       setError("Rellena el correo y la contraseña.");
+      return;
+    }
+
+    if (!API_BASE_URL) {
+      setError(
+        "La API de Calmward no está configurada. Revisa API_BASE_URL en config.ts."
+      );
       return;
     }
 
@@ -151,35 +159,54 @@ function AuthScreen({ navigation }: any) {
       const endpoint =
         mode === "login" ? "/auth/login" : "/auth/register-and-login";
 
-      let token = "demo-token";
-      let isSponsorFromApi: boolean | undefined = undefined;
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-      if (API_BASE_URL) {
+      if (!res.ok) {
+        let msg =
+          "No se ha podido iniciar sesión. Revisa correo y contraseña o vuelve a intentarlo.";
         try {
-          const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password }),
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            token = data.token || token;
-            if (typeof data.isSponsor === "boolean") {
-              isSponsorFromApi = data.isSponsor;
-            }
-          } else {
-            console.log("Error API Calmward, uso token local");
+          const data = await res.json();
+          if (data && typeof data.error === "string" && data.error.trim()) {
+            msg = data.error.trim();
           }
-        } catch (e) {
-          console.log("Error de red con Calmward API", e);
+        } catch {
+          // ignoramos JSON inválido
         }
+        setError(msg);
+        return;
       }
 
+      const data = await res.json();
+
+      const token =
+        typeof data.token === "string" && data.token.trim().length > 0
+          ? data.token.trim()
+          : null;
+
+      const isSponsorFromApi: boolean | undefined =
+        typeof data.isSponsor === "boolean" ? data.isSponsor : undefined;
+
+      if (!token) {
+        setError(
+          "La API no ha devuelto un token de sesión válido. Habla con el desarrollador del backend."
+        );
+        return;
+      }
+
+      // Actualizamos el contexto; MainNavigation cambiará de Auth -> Root automáticamente.
       await login(email, token, isSponsorFromApi);
-      navigation.replace("Root");
+
+      // IMPORTANTE: no hacemos navigation.replace("Root") aquí.
+      // Cuando isLogged cambie a true, el Stack se recrea y entra en Root.
     } catch (e) {
-      setError("No se ha podido iniciar sesión, inténtalo de nuevo.");
+      console.log("Error de red con Calmward API", e);
+      setError(
+        "No se ha podido conectar con el servidor de Calmward. Revisa tu conexión o inténtalo más tarde."
+      );
     } finally {
       setLoading(false);
     }
@@ -270,7 +297,9 @@ function AuthScreen({ navigation }: any) {
               disabled={loading}
             >
               <Text style={styles.primaryButtonText}>
-                {loading ? "Procesando..." : mode === "login"
+                {loading
+                  ? "Procesando..."
+                  : mode === "login"
                   ? "Iniciar sesión"
                   : "Crear cuenta"}
               </Text>
@@ -289,6 +318,8 @@ function AuthScreen({ navigation }: any) {
     </SafeAreaView>
   );
 }
+
+
 
 // ---------- TAB: INICIO ----------
 
@@ -1606,8 +1637,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   content: {
-    padding: 16,
-    paddingBottom: 32,
+  padding: 16,
+  paddingBottom: 32,
+  flexGrow: 1, // 👈 CLAVE: hace que el ScrollView ocupe toda la altura
   },
   sectionCard: {
     backgroundColor: "#FFFFFF",
