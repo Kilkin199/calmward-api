@@ -1623,6 +1623,8 @@ function AppTabs() {
 
 // ---------- NAVEGACIÓN RAÍZ + CONTEXTO AUTH ----------
 
+// ---------- NAVEGACIÓN RAÍZ + CONTEXTO AUTH ----------
+
 export default function MainNavigation() {
   const [ready, setReady] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
@@ -1831,30 +1833,30 @@ export default function MainNavigation() {
 
   return (
     <AuthContext.Provider value={authContext}>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {isLogged ? (
-          <>
-            <Stack.Screen name="Root" component={AppTabs} />
-            <Stack.Screen name="Contacto" component={ContactScreen} />
-            <Stack.Screen name="Legal" component={LegalScreen} />
-            <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
-            <Stack.Screen
-              name="SponsorPayment"
-              component={SponsorPaymentScreen}
-            />
-            <Stack.Screen name="Settings" component={SettingsScreen} />
-          </>
-        ) : (
-          <>
-            <Stack.Screen name="Auth" component={AuthScreen} />
-            <Stack.Screen name="Contacto" component={ContactScreen} />
-            <Stack.Screen name="Legal" component={LegalScreen} />
-          </>
-        )}
+      <Stack.Navigator
+        screenOptions={{ headerShown: false }}
+        initialRouteName="Root"
+      >
+        {/* Siempre entras a las tabs, estés logueado o no */}
+        <Stack.Screen name="Root" component={AppTabs} />
+
+        {/* Pantalla de Auth accesible desde el header/botones */}
+        <Stack.Screen name="Auth" component={AuthScreen} />
+
+        {/* Resto de pantallas secundarias */}
+        <Stack.Screen name="Contacto" component={ContactScreen} />
+        <Stack.Screen name="Legal" component={LegalScreen} />
+        <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
+        <Stack.Screen
+          name="SponsorPayment"
+          component={SponsorPaymentScreen}
+        />
+        <Stack.Screen name="Settings" component={SettingsScreen} />
       </Stack.Navigator>
     </AuthContext.Provider>
   );
 }
+
 
 // ---------- ESTILOS ----------
 
