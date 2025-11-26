@@ -1,11 +1,11 @@
 // api/index.js
-// Servidor Calmward: IA (Groq) + Auth con base de datos (PostgreSQL en Render)
+// Servidor IA + Auth para Calmward usando Groq (Llama 3.1 en la nube) + Postgres
 
 const express = require("express");
 const cors = require("cors");
-const bcrypt = require("bcryptjs");
-const { Pool } = require("pg");
 const crypto = require("crypto");
+const { Pool } = require("pg");
+const bcrypt = require("bcryptjs");
 
 // Polyfill de fetch para Node en Render (por si no está definido)
 const fetch = (...args) =>
@@ -17,30 +17,25 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// ----------- CONFIG IA (GROQ) -------------
+// ---------- CONFIG DB (Postgres) ----------
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
-
-// ----------- CONFIG BD (POSTGRES) ----------
-
-const DATABASE_URL = process.env.DATABASE_URL || null;
+const DATABASE_URL = process.env.DATABASE_URL;
 let pool = null;
 
-if (DATABASE_URL) {
+if (!DATABASE_URL) {
+  console.warn(
+    "[Calmward] No hay DATABASE_URL. El login/registro real NO funcionará."
+  );
+} else {
   pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // Render PostgreSQL
+    ssl: {
+      rejectUnauthorized: false, // típico en Render
+    },
   });
-} else {
-  console.warn(
-    "?? No hay DATABASE_URL configurado. Las cuentas no se guardarán en BD."
-  );
 }
 
-// Crea tablas si no existen
-async function ensureDb() {
+async function initDb() {
   if (!pool) return;
 
   // Tabla de usuarios
@@ -49,74 +44,104 @@ async function ensureDb() {
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      is_sponsor BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      is_sponsor BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 
-  // Tabla de sesiones simples
+  // Tabla de sesiones (tokens)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sessions (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       token TEXT UNIQUE NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  console.log("[Calmward] Tablas users/sessions OK");
 }
 
-// Generar token aleatorio para la sesión
-function createToken() {
-  return crypto.randomBytes(32).toString("hex");
+if (pool) {
+  initDb().catch((err) => {
+    console.error("[Calmward] Error inicializando DB:", err);
+  });
 }
 
-// ----------- PROMPTS DEL MODELO (PERSONALIDADES) -----------
+// Helpers DB
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+async function findUserByEmail(email) {
+  if (!pool) return null;
+  const norm = normalizeEmail(email);
+  const { rows } = await pool.query("SELECT * FROM users WHERE email = $1", [
+    norm,
+  ]);
+  return rows[0] || null;
+}
+
+async function createUser(email, password) {
+  if (!pool) throw new Error("DB no configurada");
+  const norm = normalizeEmail(email);
+  const hash = await bcrypt.hash(password, 10);
+  const { rows } = await pool.query(
+    `
+      INSERT INTO users (email, password_hash)
+      VALUES ($1, $2)
+      ON CONFLICT (email) DO NOTHING
+      RETURNING *;
+    `,
+    [norm, hash]
+  );
+  return rows[0] || null;
+}
+
+async function createSession(userId) {
+  if (!pool) throw new Error("DB no configurada");
+  const token = crypto.randomBytes(32).toString("hex");
+  await pool.query(
+    `
+      INSERT INTO sessions (user_id, token)
+      VALUES ($1, $2);
+    `,
+    [userId, token]
+  );
+  return token;
+}
+
+// ---------- CONFIG GROQ IA ----------
+
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+
+// ----- PROMPTS DEL MODELO -----
 
 const SYSTEM_LISTEN = `
-Eres Calmward, una IA de apoyo emocional centrada solo en ESCUCHAR y ACOMPAÑAR.
+Eres una inteligencia artificial de apoyo emocional llamada Calmward.
+Tu función es hablar con el usuario como un amigo o amiga de confianza,
+con mucha empatía, calidez y sin juicios.
 
-Tu modo actual es: "solo escúchame".
-
-Estilo:
-- Hablas como una persona cercana, cálida y respetuosa.
-- Usas español sencillo, sin tecnicismos.
-- Te enfocas en validar las emociones, no en dar soluciones.
-- Puedes hacer alguna pregunta suave para entender mejor, pero sin interrogar.
-
-Límites:
-- No eres psicólogo, psiquiatra ni médico. No haces diagnósticos ni das consejos médicos.
-- No prometes resultados seguros ("todo va a salir bien").
-- No minimizas ("no es para tanto", "hay gente peor").
-
-Objetivo:
-- Que la persona sienta que alguien está con ella en lo que cuenta.
-- Devolverle sus emociones con otras palabras para que se sienta comprendida.
-- No des listas de tareas ni "planes", solo acompañamiento y comprensión.
+REGLAS IMPORTANTES:
+- No eres psicólogo ni psiquiatra, no des diagnósticos ni hables como profesional sanitario.
+- No prometas cosas imposibles ("todo va a ir bien seguro", "esto se va a arreglar sí o sí").
+- Valida siempre la emoción de la persona ("tiene sentido que te sientas así", "no estás exagerando").
+- Usa un tono cercano, en español, sencillo, sin tecnicismos.
+- No minimices el problema ("no es para tanto", "hay gente peor").
+- Si detectas riesgo serio (ideas de hacerse daño, etc.), anima a la persona a buscar ayuda profesional o de emergencia, sin dar instrucciones médicas.
 `;
 
 const SYSTEM_HELP = `
-Eres Calmward, una IA de apoyo emocional en modo "ayúdame a ordenar".
+Eres Calmward, una IA de apoyo emocional que ayuda a ordenar ideas con calma.
 
-Tu función aquí es:
-- Ayudar a la persona a ENTENDER mejor lo que le pasa.
-- Separar problemas, ponerles nombre y proponer PASOS PEQUEÑOS y realistas.
-
-Estilo:
-- Hablas en español, cercano y tranquilo.
-- Estructuras tus respuestas: primero entiendes, luego ordenas, luego propones 1–2 acciones pequeñas.
-- Puedes usar viñetas o pasos numerados cuando propongas acciones, pero sin convertirlo en un sermón.
-
-Límites:
-- No eres profesional sanitario, no haces diagnósticos ni recomendaciones médicas.
-- Si aparecen ideas de autolesión, suicidio o violencia, anima a buscar ayuda profesional o servicios de emergencia, pero sin dar instrucciones médicas.
-
-Muy importante:
-- Siempre que propongas acciones, hazlas pequeñas y concretas, por ejemplo:
-  - "Escribir 3 frases sobre lo que sientes ahora mismo."
-  - "Mandar un mensaje a una persona de confianza."
-  - "Apuntar una sola cosa que quieras probar esta semana."
-
-- Evita frases hechas genéricas; responde de forma específica a lo que la persona ha contado.
+REGLAS:
+- Habla como una persona cercana, en español, tono tranquilo.
+- Ayuda a la persona a separar problemas, verlos con perspectiva y elegir micro-acciones pequeñas.
+- NO eres médico ni psicólogo, no hagas diagnósticos ni des recomendaciones médicas.
+- No des listas gigantes de tareas; como máximo 1 o 2 pasos pequeños, muy concretos y realistas.
+- Si aparece algo muy grave (autolesiones, suicidio, violencia), anima a la persona a pedir ayuda profesional o de emergencia.
 `;
 
 // Limpia historial que pueda venir del cliente
@@ -130,166 +155,134 @@ function normalizeHistory(history) {
     .filter((m) => m.content.trim().length > 0);
 }
 
-// ----------- RUTA DE SALUD -----------
+// ---------- RUTA DE SALUD ----------
 
-app.get("/", async (_req, res) => {
-  let dbOk = false;
-  if (pool) {
-    try {
-      await ensureDb();
-      await pool.query("SELECT 1");
-      dbOk = true;
-    } catch (e) {
-      dbOk = false;
-    }
-  }
+app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "calmward-api",
     provider: "groq",
     model: GROQ_MODEL,
     hasApiKey: !!GROQ_API_KEY,
-    hasDatabase: !!pool,
-    dbOk,
+    hasDatabase: !!DATABASE_URL,
   });
 });
 
-// ----------- AUTH: REGISTER + LOGIN EN UNO -----------
+// ---------- AUTH: LOGIN / REGISTER ----------
 
+// POST /auth/register-and-login
+// Crea usuario (si no existe) y devuelve token
 app.post("/auth/register-and-login", async (req, res) => {
   try {
-    if (!pool || !DATABASE_URL) {
+    if (!pool) {
       return res.status(500).json({
-        error:
-          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
+        error: "DATABASE_URL no está configurada en el servidor.",
       });
     }
 
-    await ensureDb();
-
     const { email, password } = req.body || {};
-    const rawEmail = String(email || "").trim().toLowerCase();
-    const rawPassword = String(password || "");
 
-    if (!rawEmail || !rawEmail.includes("@")) {
-      return res.status(400).json({ error: "Correo no válido." });
-    }
-    if (!rawPassword || rawPassword.length < 6) {
+    if (!email || !password) {
       return res
         .status(400)
-        .json({ error: "La contraseña debe tener al menos 6 caracteres." });
+        .json({ error: "Faltan 'email' o 'password' en el cuerpo." });
     }
 
-    // ¿Existe ya el usuario?
-    const existing = await pool.query(
-      "SELECT id, email, password_hash, is_sponsor FROM users WHERE email = $1",
-      [rawEmail]
-    );
+    const normEmail = normalizeEmail(email);
 
-    let userRow;
+    if (password.length < 6) {
+      return res.status(400).json({
+        error: "La contraseña debe tener al menos 6 caracteres.",
+      });
+    }
 
-    if (existing.rowCount > 0) {
-      // Ya existe: comprobamos contraseña y logeamos
-      userRow = existing.rows[0];
-      const ok = await bcrypt.compare(rawPassword, userRow.password_hash);
+    let user = await findUserByEmail(normEmail);
+
+    if (!user) {
+      // Crear usuario nuevo
+      user = await createUser(normEmail, password);
+      if (!user) {
+        // Raza de condición muy rara: alguien ha creado el user justo antes
+        user = await findUserByEmail(normEmail);
+      }
+    } else {
+      // Usuario ya existe: comprobar contraseña antes de loguear
+      const ok = await bcrypt.compare(password, user.password_hash);
       if (!ok) {
         return res
           .status(401)
           .json({ error: "Correo o contraseña incorrectos." });
       }
-    } else {
-      // No existe: lo creamos
-      const hash = await bcrypt.hash(rawPassword, 10);
-      const inserted = await pool.query(
-        "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, is_sponsor",
-        [rawEmail, hash]
-      );
-      userRow = inserted.rows[0];
     }
 
-    const token = createToken();
-    await pool.query(
-      "INSERT INTO sessions (user_id, token) VALUES ($1, $2)",
-      [userRow.id, token]
-    );
+    if (!user) {
+      return res
+        .status(500)
+        .json({ error: "No se ha podido crear/recuperar el usuario." });
+    }
+
+    const token = await createSession(user.id);
 
     return res.json({
       token,
-      email: userRow.email,
-      isSponsor: !!userRow.is_sponsor,
+      isSponsor: !!user.is_sponsor,
     });
   } catch (err) {
-    console.error("Error en /auth/register-and-login:", err);
+    console.error("[Calmward] Error en /auth/register-and-login:", err);
     return res.status(500).json({
-      error:
-        "Ha habido un problema al crear o iniciar sesión. Inténtalo de nuevo en unos segundos.",
+      error: "Ha habido un problema al registrar/iniciar sesión.",
     });
   }
 });
 
-// ----------- AUTH: SOLO LOGIN -----------
-
+// POST /auth/login
+// Comprueba usuario + contraseña y devuelve token
 app.post("/auth/login", async (req, res) => {
   try {
-    if (!pool || !DATABASE_URL) {
+    if (!pool) {
       return res.status(500).json({
-        error:
-          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
+        error: "DATABASE_URL no está configurada en el servidor.",
       });
     }
 
-    await ensureDb();
-
     const { email, password } = req.body || {};
-    const rawEmail = String(email || "").trim().toLowerCase();
-    const rawPassword = String(password || "");
-
-    if (!rawEmail || !rawPassword) {
+    if (!email || !password) {
       return res
         .status(400)
-        .json({ error: "Debes indicar correo y contraseña." });
+        .json({ error: "Faltan 'email' o 'password' en el cuerpo." });
     }
 
-    const existing = await pool.query(
-      "SELECT id, email, password_hash, is_sponsor FROM users WHERE email = $1",
-      [rawEmail]
-    );
+    const normEmail = normalizeEmail(email);
+    const user = await findUserByEmail(normEmail);
 
-    if (existing.rowCount === 0) {
+    if (!user) {
       return res
         .status(401)
-        .json({ error: "No existe ninguna cuenta con ese correo." });
+        .json({ error: "Correo o contraseña incorrectos." });
     }
 
-    const userRow = existing.rows[0];
-    const ok = await bcrypt.compare(rawPassword, userRow.password_hash);
+    const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
       return res
         .status(401)
         .json({ error: "Correo o contraseña incorrectos." });
     }
 
-    const token = createToken();
-    await pool.query(
-      "INSERT INTO sessions (user_id, token) VALUES ($1, $2)",
-      [userRow.id, token]
-    );
+    const token = await createSession(user.id);
 
     return res.json({
       token,
-      email: userRow.email,
-      isSponsor: !!userRow.is_sponsor,
+      isSponsor: !!user.is_sponsor,
     });
   } catch (err) {
-    console.error("Error en /auth/login:", err);
-    return res.status(500).json({
-      error:
-        "Ha habido un problema al iniciar sesión. Inténtalo de nuevo en unos segundos.",
-    });
+    console.error("[Calmward] Error en /auth/login:", err);
+    return res
+      .status(500)
+      .json({ error: "Ha habido un problema al iniciar sesión." });
   }
 });
 
-// ----------- IA: POST /ai/talk -----------
+// ---------- POST /ai/talk (IA EMOCIONAL) ----------
 
 app.post("/ai/talk", async (req, res) => {
   try {
@@ -357,17 +350,12 @@ app.post("/ai/talk", async (req, res) => {
   }
 });
 
-// ----------- ARRANCAR SERVIDOR -----------
+// ---------- ARRANQUE SERVIDOR ----------
 
 app.listen(PORT, () => {
   console.log(`Calmward API escuchando en puerto ${PORT}`);
   console.log(`? GROQ_MODEL = ${GROQ_MODEL}`);
-  if (DATABASE_URL) {
-    console.log("? DATABASE_URL configurado. Intentando preparar tablas...");
-    ensureDb()
-      .then(() => console.log("Tablas listas (users, sessions)."))
-      .catch((err) => console.error("Error preparando la BD:", err));
-  } else {
-    console.log("?? Sin DATABASE_URL: no habrá persistencia de usuarios.");
-  }
+  console.log(
+    `? DB: ${DATABASE_URL ? "conectada (DATABASE_URL presente)" : "NO CONFIGURADA"}`
+  );
 });
