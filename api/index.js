@@ -1,5 +1,5 @@
 // api/index.js
-// Servidor Calmward: IA Groq + Auth con PostgreSQL
+// Calmward API: IA Groq + Auth con PostgreSQL + Admin básico
 
 const express = require("express");
 const cors = require("cors");
@@ -19,6 +19,7 @@ const PORT = process.env.PORT || 3001;
 // ---------- CONFIG DB ----------
 
 const DATABASE_URL = process.env.DATABASE_URL;
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || null;
 
 let pool = null;
 
@@ -29,23 +30,38 @@ if (!DATABASE_URL) {
 } else {
   pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // Render Postgres suele ir con SSL
+    ssl: { rejectUnauthorized: false }, // típico en Render
   });
 }
 
-// Crea tablas básicas si no existen
+// Crea/actualiza tablas básicas si no existen
 async function ensureSchema() {
   if (!pool) return;
 
-  const createSql = `
+  const sql = `
+    -- Tabla de usuarios
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       is_sponsor BOOLEAN NOT NULL DEFAULT FALSE,
+      is_admin  BOOLEAN NOT NULL DEFAULT FALSE,
+      name      TEXT,
+      gender    TEXT,
+      country   TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Asegurar columnas por si la tabla ya existía de antes
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS name      TEXT,
+      ADD COLUMN IF NOT EXISTS gender    TEXT,
+      ADD COLUMN IF NOT EXISTS country   TEXT,
+      ADD COLUMN IF NOT EXISTS is_sponsor BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS is_admin  BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    -- Tabla de sesiones (tokens simples)
     CREATE TABLE IF NOT EXISTS sessions (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -54,25 +70,109 @@ async function ensureSchema() {
     );
   `;
 
-  try {
-    await pool.query(createSql);
-    console.log("[Calmward API] Tablas users/sessions listas");
-  } catch (err) {
-    console.error("[Calmward API] Error creando tablas:", err);
-  }
+  await pool.query(sql);
+  console.log("[Calmward API] Tablas users/sessions listas");
 }
 
-ensureSchema().catch((e) =>
-  console.error("[Calmward API] Error en ensureSchema:", e)
-);
+if (pool) {
+  ensureSchema().catch((e) =>
+    console.error("[Calmward API] Error en ensureSchema:", e)
+  );
+}
 
-// Helpers para tokens
+// ---------- HELPERS DB / AUTH ----------
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
 function randomToken() {
   return (
     Math.random().toString(36).slice(2) +
     Math.random().toString(36).slice(2) +
     Date.now().toString(36)
   );
+}
+
+// Validación de contraseña: mínimo 10 caracteres y al menos 1 mayúscula
+function isValidPassword(password) {
+  if (typeof password !== "string") return false;
+  if (password.length < 10) return false;
+  // Mayúsculas normales y acentuadas / Ñ
+  if (!/[A-ZÁÉÍÓÚÑ]/.test(password)) return false;
+  return true;
+}
+
+// Middleware: autenticar por token de sesión (Authorization: Bearer <token>)
+async function authMiddleware(req, res, next) {
+  if (!pool) {
+    return res
+      .status(500)
+      .json({ error: "No hay base de datos configurada en el servidor." });
+  }
+
+  const authHeader = req.headers.authorization || "";
+  const parts = authHeader.split(" ");
+  const token =
+    parts.length === 2 && parts[0] === "Bearer" ? parts[1].trim() : null;
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Falta token de sesión (usa Authorization: Bearer <token>).",
+    });
+  }
+
+  try {
+    await ensureSchema();
+
+    const result = await pool.query(
+      `
+      SELECT 
+        s.user_id,
+        u.email,
+        u.name,
+        u.gender,
+        u.country,
+        u.is_sponsor,
+        u.is_admin
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.token = $1
+    `,
+      [token]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(401).json({ error: "Sesión no válida o caducada." });
+    }
+
+    const row = result.rows[0];
+    req.user = {
+      id: row.user_id,
+      email: row.email,
+      name: row.name,
+      gender: row.gender,
+      country: row.country,
+      isSponsor: row.is_sponsor,
+      isAdmin: row.is_admin,
+    };
+
+    next();
+  } catch (err) {
+    console.error("Error en authMiddleware:", err);
+    return res
+      .status(500)
+      .json({ error: "Error interno al validar la sesión." });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user || !req.user.isAdmin) {
+    return res
+      .status(403)
+      .json({ error: "Solo el administrador puede hacer esta acción." });
+  }
+  next();
 }
 
 // ---------- CONFIG GROQ IA ----------
@@ -82,33 +182,52 @@ const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 // IMPORTANTE: este nombre de modelo debe existir en Groq
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
-// Prompts (personalidades distintas)
+// Prompts (dos personalidades distintas)
 
 const SYSTEM_LISTEN = `
 Eres una inteligencia artificial de apoyo emocional llamada Calmward.
-Tu función es hablar con el usuario como un amigo o amiga de confianza,
-con mucha empatía, calidez y sin juicios.
+Tu función es ESCUCHAR y ACOMPAÑAR.
 
-REGLAS IMPORTANTES:
-- No eres psicólogo ni psiquiatra, no des diagnósticos ni hables como profesional sanitario.
-- No prometas cosas imposibles ("todo va a ir bien seguro", "esto se va a arreglar sí o sí").
-- Valida siempre la emoción de la persona ("tiene sentido que te sientas así", "no estás exagerando").
-- Usa un tono cercano, en español, sencillo, sin tecnicismos.
-- No minimices el problema ("no es para tanto", "hay gente peor").
-- Si detectas riesgo serio (ideas de hacerse daño, etc.), anima a la persona a buscar ayuda profesional o de emergencia, sin dar instrucciones médicas.
+Modo actual: "solo escúchame".
+
+Estilo:
+- Hablas como una persona cercana, cálida y respetuosa.
+- Usas español sencillo, sin tecnicismos.
+- Te enfocas en validar las emociones, no en dar soluciones.
+- Puedes hacer alguna pregunta suave para entender mejor, pero sin interrogar.
+
+Límites:
+- No eres psicólogo ni psiquiatra ni médico. No haces diagnósticos ni das consejos médicos.
+- No prometes resultados seguros ("todo va a salir bien").
+- No minimizas ("no es para tanto", "hay gente peor").
+
+Objetivo:
+- Que la persona sienta que alguien está con ella en lo que cuenta.
+- Devolverle sus emociones con otras palabras para que se sienta comprendida.
 `;
 
 const SYSTEM_HELP = `
-Eres Calmward, una IA de apoyo emocional que ayuda a ordenar ideas con calma.
+Eres Calmward, una IA de apoyo emocional en modo "ayúdame a ordenar".
 
-REGLAS:
-- Habla como una persona cercana, en español, tono tranquilo.
-- Primero demuestra que has entendido lo que la persona cuenta (parafrasea un poco).
-- Después, ayúdale a separar el problema en partes (por ejemplo: "lo que sientes", "lo que depende de ti", "lo que no depende de ti").
-- Propón 1 o 2 acciones pequeñas y realistas, muy concretas, relacionadas con lo que ha dicho (por ejemplo: apuntar algo, mandar un mensaje, darse 10 minutos para algo sencillo, etc.).
-- NO eres médico ni psicólogo, no hagas diagnósticos ni des recomendaciones médicas.
-- No des listas gigantes de tareas; como máximo 1 o 2 pasos pequeños.
-- Si aparece algo muy grave (autolesiones, suicidio, violencia), anima a la persona a pedir ayuda profesional o de emergencia.
+Tu función aquí es:
+- Ayudar a la persona a ENTENDER mejor lo que le pasa.
+- Separar problemas, ponerles nombre y proponer PASOS PEQUEÑOS y realistas.
+
+Estilo:
+- Hablas en español cercano y tranquilo.
+- Estructuras tus respuestas: primero demuestras que has entendido, luego ordenas, luego propones 1-2 acciones pequeñas.
+- Puedes usar viñetas o pasos numerados si ayuda, pero sin hacer un sermón.
+
+Límites:
+- No eres profesional sanitario, no haces diagnósticos ni recomendaciones médicas.
+- Si aparecen ideas de autolesión, suicidio o violencia, anima a buscar ayuda profesional o servicios de emergencia, pero sin dar instrucciones médicas.
+
+Importante:
+- Siempre que propongas acciones, hazlas pequeñas y concretas, por ejemplo:
+  - "Escribir 3 frases sobre lo que sientes ahora mismo."
+  - "Mandar un mensaje a una persona de confianza."
+  - "Apuntar una sola cosa que quieras probar esta semana."
+- Evita frases hechas genéricas; responde de forma específica a lo que la persona ha contado.
 `;
 
 // Normaliza historial que pueda venir del cliente
@@ -122,135 +241,159 @@ function normalizeHistory(history) {
     .filter((m) => m.content.trim().length > 0);
 }
 
-// ---------- RUTA SALUD ----------
+// ---------- RUTA DE SALUD ----------
 
-app.get("/", (_req, res) => {
+app.get("/", async (_req, res) => {
+  let dbOk = false;
+  if (pool) {
+    try {
+      await ensureSchema();
+      await pool.query("SELECT 1");
+      dbOk = true;
+    } catch {
+      dbOk = false;
+    }
+  }
+
   res.json({
     ok: true,
     service: "calmward-api",
     provider: "groq",
     model: GROQ_MODEL,
     hasApiKey: !!GROQ_API_KEY,
-    hasDatabase: !!DATABASE_URL,
+    hasDatabase: !!pool,
+    dbOk,
   });
 });
 
-// ---------- AUTH: REGISTER + LOGIN EN UNO ----------
+// ---------- AUTH: REGISTRO (CREAR CUENTA) ----------
+// Usado desde la pestaña "Crear cuenta"
 
 app.post("/auth/register-and-login", async (req, res) => {
-  if (!pool) {
+  if (!pool || !DATABASE_URL) {
     return res.status(500).json({
-      error: "No hay base de datos configurada. Falta DATABASE_URL.",
+      error:
+        "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
     });
   }
 
   try {
-    const { email, password } = req.body || {};
+    await ensureSchema();
 
-    if (
-      !email ||
-      typeof email !== "string" ||
-      !password ||
-      typeof password !== "string"
-    ) {
+    const { email, password, name, gender, country } = req.body || {};
+
+    const normEmail = normalizeEmail(email);
+    const rawPassword = String(password || "");
+
+    if (!normEmail || !normEmail.includes("@")) {
+      return res.status(400).json({ error: "Correo no válido." });
+    }
+
+    if (!isValidPassword(rawPassword)) {
       return res.status(400).json({
-        error: "Faltan 'email' o 'password'.",
+        error:
+          "La contraseña debe tener al menos 10 caracteres y una letra mayúscula.",
       });
     }
 
-    const normEmail = email.trim().toLowerCase();
-
-    // ¿Existe ya el usuario?
+    // ¿Ya existe el usuario?
     const existing = await pool.query(
-      "SELECT id, password_hash, is_sponsor FROM users WHERE email = $1",
+      "SELECT id FROM users WHERE email = $1",
       [normEmail]
     );
 
-    let userId;
-    let isSponsor = false;
-
-    if (existing.rows.length === 0) {
-      // Crear nuevo usuario
-      const hash = await bcrypt.hash(password, 10);
-      const insert = await pool.query(
-        "INSERT INTO users (email, password_hash, is_sponsor) VALUES ($1, $2, $3) RETURNING id, is_sponsor",
-        [normEmail, hash, false]
-      );
-      userId = insert.rows[0].id;
-      isSponsor = insert.rows[0].is_sponsor;
-    } else {
-      // Ya existe: comprobar contraseña
-      const row = existing.rows[0];
-      const ok = await bcrypt.compare(password, row.password_hash);
-      if (!ok) {
-        return res.status(401).json({
-          error: "La contraseña no es correcta.",
-        });
-      }
-      userId = row.id;
-      isSponsor = row.is_sponsor;
+    if (existing.rowCount > 0) {
+      return res
+        .status(400)
+        .json({ error: "Ya existe una cuenta con ese correo." });
     }
 
-    // Crear sesión
+    const hash = await bcrypt.hash(rawPassword, 10);
+
+    // is_admin si coincide con ADMIN_EMAIL
+    const isAdmin =
+      ADMIN_EMAIL && normEmail === ADMIN_EMAIL.toLowerCase() ? true : false;
+
+    const inserted = await pool.query(
+      `
+      INSERT INTO users (email, password_hash, name, gender, country, is_sponsor, is_admin)
+      VALUES ($1, $2, $3, $4, $5, FALSE, $6)
+      RETURNING id, email, name, gender, country, is_sponsor, is_admin
+    `,
+      [normEmail, hash, name || null, gender || null, country || null, isAdmin]
+    );
+
+    const user = inserted.rows[0];
+
     const token = randomToken();
     await pool.query(
       "INSERT INTO sessions (user_id, token) VALUES ($1, $2)",
-      [userId, token]
+      [user.id, token]
     );
 
     return res.json({
       token,
-      isSponsor,
+      email: user.email,
+      name: user.name,
+      gender: user.gender,
+      country: user.country,
+      isSponsor: user.is_sponsor,
+      isAdmin: user.is_admin,
     });
   } catch (err) {
     console.error("Error en /auth/register-and-login:", err);
     return res.status(500).json({
-      error: "Error interno al registrar/iniciar sesión.",
+      error: "Ha habido un problema al crear la cuenta. Inténtalo de nuevo.",
     });
   }
 });
 
-// ---------- AUTH: SOLO LOGIN ----------
+// ---------- AUTH: LOGIN (INICIAR SESIÓN) ----------
+// Usado desde la pestaña "Iniciar sesión"
 
 app.post("/auth/login", async (req, res) => {
-  if (!pool) {
+  if (!pool || !DATABASE_URL) {
     return res.status(500).json({
-      error: "No hay base de datos configurada. Falta DATABASE_URL.",
+      error:
+        "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
     });
   }
 
   try {
+    await ensureSchema();
+
     const { email, password } = req.body || {};
 
-    if (
-      !email ||
-      typeof email !== "string" ||
-      !password ||
-      typeof password !== "string"
-    ) {
+    const normEmail = normalizeEmail(email);
+    const rawPassword = String(password || "");
+
+    if (!normEmail || !rawPassword) {
       return res.status(400).json({
-        error: "Faltan 'email' o 'password'.",
+        error: "Debes indicar correo y contraseña.",
       });
     }
 
-    const normEmail = email.trim().toLowerCase();
-
-    const q = await pool.query(
-      "SELECT id, password_hash, is_sponsor FROM users WHERE email = $1",
+    const existing = await pool.query(
+      `
+      SELECT id, email, password_hash, name, gender, country, is_sponsor, is_admin
+      FROM users
+      WHERE email = $1
+    `,
       [normEmail]
     );
 
-    if (q.rows.length === 0) {
+    if (existing.rowCount === 0) {
       return res.status(401).json({
-        error: "No existe ninguna cuenta con ese correo.",
+        error: "El correo o la contraseña no son correctos.",
       });
     }
 
-    const user = q.rows[0];
-    const ok = await bcrypt.compare(password, user.password_hash);
+    const user = existing.rows[0];
+
+    const ok = await bcrypt.compare(rawPassword, user.password_hash);
     if (!ok) {
       return res.status(401).json({
-        error: "La contraseña no es correcta.",
+        error: "El correo o la contraseña no son correctos.",
       });
     }
 
@@ -262,15 +405,126 @@ app.post("/auth/login", async (req, res) => {
 
     return res.json({
       token,
+      email: user.email,
+      name: user.name,
+      gender: user.gender,
+      country: user.country,
       isSponsor: user.is_sponsor,
+      isAdmin: user.is_admin,
     });
   } catch (err) {
     console.error("Error en /auth/login:", err);
     return res.status(500).json({
-      error: "Error interno al iniciar sesión.",
+      error: "Ha habido un problema al iniciar sesión.",
     });
   }
 });
+
+// ---------- ENDPOINTS ADMIN (panel de usuarios) ----------
+// Más adelante podrás consumirlos desde una pantalla "Admin" en la app
+
+// Listar usuarios
+app.get("/admin/users", authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    await ensureSchema();
+    const result = await pool.query(
+      `
+      SELECT id, email, name, gender, country, is_sponsor, is_admin, created_at
+      FROM users
+      ORDER BY created_at DESC
+    `
+    );
+    return res.json({ users: result.rows });
+  } catch (err) {
+    console.error("Error en GET /admin/users:", err);
+    return res
+      .status(500)
+      .json({ error: "No se ha podido obtener la lista de usuarios." });
+  }
+});
+
+// Actualizar flags básicos (is_sponsor, is_admin)
+app.patch(
+  "/admin/users/:id",
+  authMiddleware,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      await ensureSchema();
+
+      const userId = parseInt(req.params.id, 10);
+      if (!userId || userId <= 0) {
+        return res.status(400).json({ error: "ID de usuario no válido." });
+      }
+
+      const { isSponsor, isAdmin } = req.body || {};
+
+      const result = await pool.query(
+        `
+        UPDATE users
+        SET
+          is_sponsor = COALESCE($2, is_sponsor),
+          is_admin   = COALESCE($3, is_admin)
+        WHERE id = $1
+        RETURNING id, email, name, gender, country, is_sponsor, is_admin, created_at
+      `,
+        [userId, typeof isSponsor === "boolean" ? isSponsor : null,
+          typeof isAdmin === "boolean" ? isAdmin : null]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Usuario no encontrado." });
+      }
+
+      return res.json({ user: result.rows[0] });
+    } catch (err) {
+      console.error("Error en PATCH /admin/users/:id:", err);
+      return res
+        .status(500)
+        .json({ error: "No se ha podido actualizar el usuario." });
+    }
+  }
+);
+
+// Eliminar usuario
+app.delete(
+  "/admin/users/:id",
+  authMiddleware,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      await ensureSchema();
+
+      const userId = parseInt(req.params.id, 10);
+      if (!userId || userId <= 0) {
+        return res.status(400).json({ error: "ID de usuario no válido." });
+      }
+
+      // Opcional: evitar que el admin se borre a sí mismo
+      if (req.user && req.user.id === userId) {
+        return res.status(400).json({
+          error: "No puedes borrar la cuenta del administrador actual.",
+        });
+      }
+
+      await pool.query("DELETE FROM sessions WHERE user_id = $1", [userId]);
+      const result = await pool.query("DELETE FROM users WHERE id = $1", [
+        userId,
+      ]);
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Usuario no encontrado." });
+      }
+
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("Error en DELETE /admin/users/:id:", err);
+      return res
+        .status(500)
+        .json({ error: "No se ha podido eliminar el usuario." });
+    }
+  }
+);
 
 // ---------- IA: POST /ai/talk ----------
 
