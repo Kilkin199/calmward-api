@@ -35,25 +35,18 @@ const { width } = Dimensions.get("window");
 
 // ---------- AUTENTICACIÓN / CONTEXTO ----------
 
-type UserGender = "male" | "female" | "other";
-
 type AuthContextType = {
   isLogged: boolean;
   userEmail: string | null;
-  userName: string | null;
-  userGender: UserGender | null;
-  userCountry: string | null;
+  authToken: string | null;
   isSponsor: boolean;
+  isAdmin: boolean;
   sessionTimeoutMinutes: number;
   login: (
     email: string,
     token: string,
     isSponsorFromApi?: boolean,
-    profile?: {
-      name?: string | null;
-      gender?: UserGender | null;
-      country?: string | null;
-    }
+    isAdminFromApi?: boolean
   ) => Promise<void>;
   logout: () => Promise<void>;
   setSponsor: (value: boolean) => Promise<void>;
@@ -63,10 +56,9 @@ type AuthContextType = {
 const AuthContext = React.createContext<AuthContextType>({
   isLogged: false,
   userEmail: null,
-  userName: null,
-  userGender: null,
-  userCountry: null,
+  authToken: null,
   isSponsor: false,
+  isAdmin: false,
   sessionTimeoutMinutes: 30,
   login: async () => {},
   logout: async () => {},
@@ -141,33 +133,21 @@ function AppFooter() {
   );
 }
 
-// ---------- PANTALLA DE AUTENTICACIÓN (BIENVENIDA + LOGIN/REGISTRO) ----------
+// ---------- PANTALLA DE AUTENTICACIÓN (LOGIN/REGISTRO) ----------
 
 function AuthScreen({ navigation }: any) {
   const { login } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
-
-  const [name, setName] = useState("");
-  const [gender, setGender] = useState<UserGender>("other");
-  const [country, setCountry] = useState("");
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  // nuevos campos para registro
+  const [name, setName] = useState("");
+  const [gender, setGender] = useState<"hombre" | "mujer" | "otro" | "">("");
+  const [country, setCountry] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  function genderLabel(g: UserGender) {
-    if (g === "male") return "Hombre";
-    if (g === "female") return "Mujer";
-    return "Otro / Prefiero no decirlo";
-  }
-
-  function handleForgotPassword() {
-    Alert.alert(
-      "Recuperar contraseña",
-      "Pronto podrás restablecer tu contraseña desde tu correo directamente desde aquí."
-    );
-  }
 
   async function handleSubmit() {
     setError(null);
@@ -179,21 +159,24 @@ function AuthScreen({ navigation }: any) {
 
     if (mode === "register") {
       if (!name.trim()) {
-        setError("Escribe tu nombre.");
+        setError("Añade tu nombre para crear la cuenta.");
+        return;
+      }
+      if (!gender) {
+        setError("Selecciona si eres hombre, mujer u otro.");
         return;
       }
       if (!country.trim()) {
-        setError("Indica tu país.");
+        setError("Añade tu país.");
         return;
       }
-      if (password.length < 10) {
-        setError("La contraseña debe tener al menos 10 caracteres.");
-        return;
-      }
-      if (!/[A-ZÁÉÍÓÚÑ]/.test(password)) {
-        setError("La contraseña debe incluir al menos una letra mayúscula.");
-        return;
-      }
+    }
+
+    if (!API_BASE_URL) {
+      setError(
+        "La API de Calmward no está configurada. Revisa API_BASE_URL en config.ts."
+      );
+      return;
     }
 
     setLoading(true);
@@ -202,74 +185,64 @@ function AuthScreen({ navigation }: any) {
       const endpoint =
         mode === "login" ? "/auth/login" : "/auth/register-and-login";
 
-      let token = "demo-token";
-      let isSponsorFromApi: boolean | undefined = undefined;
+      const body: any = {
+        email,
+        password,
+      };
 
-      if (API_BASE_URL) {
-        try {
-          const payload: any = { email, password };
-          if (mode === "register") {
-            payload.name = name.trim();
-            payload.gender = gender;
-            payload.country = country.trim();
-          }
-
-          const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-
-          if (!res.ok) {
-            let msg =
-              "No se ha podido iniciar sesión. Revisa correo y contraseña o vuelve a intentarlo.";
-            try {
-              const data = await res.json();
-              if (
-                data &&
-                typeof data.error === "string" &&
-                data.error.trim()
-              ) {
-                msg = data.error.trim();
-              }
-            } catch {
-              // JSON inválido, usamos el mensaje por defecto
-            }
-            setError(msg);
-            return;
-          }
-
-          const data = await res.json();
-
-          if (typeof data.token === "string" && data.token.trim().length > 0) {
-            token = data.token.trim();
-          }
-
-          if (typeof data.isSponsor === "boolean") {
-            isSponsorFromApi = data.isSponsor;
-          }
-        } catch (e) {
-          console.log("Error de red con Calmward API", e);
-          setError(
-            "No se ha podido conectar con el servidor de Calmward. Revisa tu conexión o inténtalo más tarde."
-          );
-          return;
-        }
+      if (mode === "register") {
+        body.name = name;
+        body.gender = gender;
+        body.country = country;
       }
 
-      const profile =
-        mode === "register"
-          ? {
-              name: name.trim(),
-              gender,
-              country: country.trim(),
-            }
-          : undefined;
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-      await login(email, token, isSponsorFromApi, profile);
-      // No hacemos navigation.replace aquí: al cambiar isLogged, el Stack mostrará Root.
+      if (!res.ok) {
+        let msg =
+          "No se ha podido iniciar sesión. Revisa correo y contraseña o vuelve a intentarlo.";
+        try {
+          const data = await res.json();
+          if (data && typeof data.error === "string" && data.error.trim()) {
+            msg = data.error.trim();
+          }
+        } catch {
+          // ignoramos JSON inválido
+        }
+        setError(msg);
+        return;
+      }
+
+      const data = await res.json();
+
+      const token =
+        typeof data.token === "string" && data.token.trim().length > 0
+          ? data.token.trim()
+          : null;
+
+      const isSponsorFromApi: boolean | undefined =
+        typeof data.isSponsor === "boolean" ? data.isSponsor : undefined;
+
+      const isAdminFromApi: boolean | undefined =
+        typeof data.isAdmin === "boolean" ? data.isAdmin : undefined;
+
+      if (!token) {
+        setError(
+          "La API no ha devuelto un token de sesión válido. Habla con el desarrollador del backend."
+        );
+        return;
+      }
+
+      await login(email, token, isSponsorFromApi, isAdminFromApi);
     } catch (e) {
-      setError("No se ha podido iniciar sesión, inténtalo de nuevo.");
+      console.log("Error de red con Calmward API", e);
+      setError(
+        "No se ha podido conectar con el servidor de Calmward. Revisa tu conexión o inténtalo más tarde."
+      );
     } finally {
       setLoading(false);
     }
@@ -283,13 +256,19 @@ function AuthScreen({ navigation }: any) {
       >
         <View style={styles.authHeaderTop}>
           <Text style={styles.appMiniTitle}>Calmward</Text>
+          <Text style={styles.appMiniTagline}>
+            Tu espacio para respirar y escribir
+          </Text>
         </View>
 
         <View style={styles.authCard}>
-          <Text style={styles.authWelcome}>Bienvenido a Calmward</Text>
+          <Text style={styles.authWelcome}>
+            {mode === "login" ? "Bienvenido de nuevo" : "Crea tu cuenta"}
+          </Text>
           <Text style={styles.authSubtitle}>
-            Un lugar discreto para registrar tu día, hablar cuando lo
-            necesites y tener a mano ayuda si algo se complica.
+            {mode === "login"
+              ? "Inicia sesión para continuar donde lo dejaste."
+              : "Solo necesitas unos datos básicos para guardar tu progreso."}
           </Text>
 
           <View style={styles.authTabRow}>
@@ -328,57 +307,7 @@ function AuthScreen({ navigation }: any) {
           </View>
 
           <View style={styles.authForm}>
-            {mode === "register" && (
-              <>
-                <Text style={styles.label}>Nombre</Text>
-                <TextInput
-                  style={styles.input}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="Cómo quieres que te llame la app"
-                  placeholderTextColor="#9CA3AF"
-                />
-
-                <Text style={[styles.label, { marginTop: 12 }]}>Género</Text>
-                <View style={styles.genderRow}>
-                  {(["male", "female", "other"] as UserGender[]).map((g) => {
-                    const active = gender === g;
-                    return (
-                      <TouchableOpacity
-                        key={g}
-                        style={[
-                          styles.genderChip,
-                          active && styles.genderChipActive,
-                        ]}
-                        onPress={() => setGender(g)}
-                      >
-                        <Text
-                          style={[
-                            styles.genderChipText,
-                            active && styles.genderChipTextActive,
-                          ]}
-                        >
-                          {genderLabel(g)}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                <Text style={[styles.label, { marginTop: 12 }]}>País</Text>
-                <TextInput
-                  style={styles.input}
-                  value={country}
-                  onChangeText={setCountry}
-                  placeholder="Ej: España, México, Argentina..."
-                  placeholderTextColor="#9CA3AF"
-                />
-              </>
-            )}
-
-            <Text style={[styles.label, { marginTop: 12 }]}>
-              Correo electrónico
-            </Text>
+            <Text style={styles.label}>Correo electrónico</Text>
             <TextInput
               style={styles.input}
               keyboardType="email-address"
@@ -395,23 +324,67 @@ function AuthScreen({ navigation }: any) {
               secureTextEntry
               value={password}
               onChangeText={setPassword}
-              placeholder={
-                mode === "register"
-                  ? "Mínimo 10 caracteres y una mayúscula"
-                  : "••••••••"
-              }
+              placeholder="••••••••••"
               placeholderTextColor="#9CA3AF"
             />
+            {mode === "register" && (
+              <Text style={styles.passwordHint}>
+                Mínimo 10 caracteres y al menos 1 letra mayúscula.
+              </Text>
+            )}
 
-            {mode === "login" && (
-              <TouchableOpacity
-                style={styles.forgotPasswordBtn}
-                onPress={handleForgotPassword}
-              >
-                <Text style={styles.forgotPasswordText}>
-                  He olvidado mi contraseña
+            {mode === "register" && (
+              <>
+                <Text style={[styles.label, { marginTop: 12 }]}>Nombre</Text>
+                <TextInput
+                  style={styles.input}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Cómo quieres que Calmward te llame"
+                  placeholderTextColor="#9CA3AF"
+                />
+
+                <Text style={[styles.label, { marginTop: 12 }]}>
+                  ¿Cómo te identificas?
                 </Text>
-              </TouchableOpacity>
+                <View style={styles.genderRow}>
+                  {(["hombre", "mujer", "otro"] as const).map((g) => {
+                    const active = gender === g;
+                    return (
+                      <TouchableOpacity
+                        key={g}
+                        style={[
+                          styles.genderChip,
+                          active && styles.genderChipActive,
+                        ]}
+                        onPress={() => setGender(g)}
+                      >
+                        <Text
+                          style={[
+                            styles.genderChipText,
+                            active && styles.genderChipTextActive,
+                          ]}
+                        >
+                          {g === "hombre"
+                            ? "Hombre"
+                            : g === "mujer"
+                            ? "Mujer"
+                            : "Otro"}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[styles.label, { marginTop: 12 }]}>País</Text>
+                <TextInput
+                  style={styles.input}
+                  value={country}
+                  onChangeText={setCountry}
+                  placeholder="Ej: España, México, Argentina..."
+                  placeholderTextColor="#9CA3AF"
+                />
+              </>
             )}
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -655,7 +628,6 @@ type ChatMessage = {
 };
 
 function TalkScreen({ navigation }: any) {
-  const { userName, userGender, userCountry } = useAuth();
   const [mode, setMode] = useState<"listen" | "organize">("listen");
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -733,15 +705,6 @@ function TalkScreen({ navigation }: any) {
         content: m.text,
       }));
 
-      const userProfile =
-        userName || userGender || userCountry
-          ? {
-              name: userName,
-              gender: userGender,
-              country: userCountry,
-            }
-          : undefined;
-
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -752,7 +715,6 @@ function TalkScreen({ navigation }: any) {
           mode: apiMode,
           message: trimmed,
           history,
-          userProfile,
         }),
         signal: controller.signal,
       });
@@ -1025,11 +987,10 @@ function DayScreen({ navigation }: any) {
   );
 }
 
-// ---------- PERFIL ----------
+// ---------- PERFIL + BOTÓN ADMIN ----------
 
 function ProfileScreen({ navigation }: any) {
-  const { userEmail, userName, userGender, userCountry, logout, isSponsor } =
-    useAuth();
+  const { userEmail, logout, isSponsor, isAdmin } = useAuth();
 
   async function handleLogout() {
     await logout();
@@ -1041,11 +1002,9 @@ function ProfileScreen({ navigation }: any) {
     parentNav.navigate("SponsorStats");
   }
 
-  function genderLabel() {
-    if (userGender === "male") return "Hombre";
-    if (userGender === "female") return "Mujer";
-    if (userGender === "other") return "Otro / Prefiero no decirlo";
-    return "No indicado";
+  function goToAdminPanel() {
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("AdminUsers");
   }
 
   return (
@@ -1055,16 +1014,7 @@ function ProfileScreen({ navigation }: any) {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Perfil</Text>
           {userEmail ? (
-            <>
-              <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
-              <Text style={styles.sectionBody}>
-                Nombre: {userName || "No indicado"}
-              </Text>
-              <Text style={styles.sectionBody}>Género: {genderLabel()}</Text>
-              <Text style={styles.sectionBody}>
-                País: {userCountry || "No indicado"}
-              </Text>
-            </>
+            <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
           ) : (
             <Text style={styles.sectionBody}>
               No hay sesión activa en este momento.
@@ -1104,6 +1054,23 @@ function ProfileScreen({ navigation }: any) {
           )}
         </View>
 
+        {isAdmin && (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Panel de administración</Text>
+            <Text style={styles.sectionBody}>
+              Desde aquí podrás ver las cuentas creadas y gestionarlas.
+            </Text>
+            <TouchableOpacity
+              style={styles.adminPanelButton}
+              onPress={goToAdminPanel}
+            >
+              <Text style={styles.adminPanelButtonText}>
+                Abrir panel de administración
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <AppFooter />
       </ScrollView>
     </SafeAreaView>
@@ -1124,10 +1091,10 @@ function ContactScreen({ navigation }: any) {
 
   async function handleEmail() {
     await touchActivity();
-    Linking.openURL("mailto:soporte@calmward.app").catch(() => {
+    Linking.openURL("mailto:calmward.contact@gmail.com").catch(() => {
       Alert.alert(
         "No se pudo abrir el correo",
-        "Copia la dirección soporte@calmward.app y escribe desde tu gestor de correo."
+        "Copia la dirección calmward.contact@gmail.com y escribe desde tu gestor de correo."
       );
     });
   }
@@ -1144,7 +1111,7 @@ function ContactScreen({ navigation }: any) {
           </Text>
           <Text style={[styles.sectionBody, { marginTop: 8 }]}>
             Correo de contacto:{" "}
-            <Text style={{ fontWeight: "600" }}>soporte@calmward.app</Text>
+            <Text style={{ fontWeight: "600" }}>calmward.contact@gmail.com</Text>
           </Text>
 
           <TouchableOpacity style={styles.contactBtn} onPress={handleEmail}>
@@ -1580,6 +1547,295 @@ function UrgentHelpScreen({ navigation }: any) {
   );
 }
 
+// ---------- PANTALLA ADMIN: LISTA DE USUARIOS ----------
+
+type AdminUser = {
+  id: number;
+  email: string;
+  name: string | null;
+  gender: string | null;
+  country: string | null;
+  is_sponsor: boolean;
+  is_admin: boolean;
+  created_at: string;
+};
+
+function AdminUsersScreen({ navigation }: any) {
+  const { isAdmin, authToken, userEmail } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadUsers() {
+    if (!API_BASE_URL || !authToken) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/users`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+
+      if (!res.ok) {
+        let msg = "No se ha podido cargar la lista de usuarios.";
+        try {
+          const data = await res.json();
+          if (data && typeof data.error === "string") {
+            msg = data.error;
+          }
+        } catch {}
+        setError(msg);
+        return;
+      }
+
+      const data = await res.json();
+      if (Array.isArray(data.users)) {
+        setUsers(data.users);
+      } else {
+        setError("Formato inesperado de respuesta del servidor.");
+      }
+    } catch (e) {
+      console.log("Error al cargar usuarios admin:", e);
+      setError("Error de red al cargar usuarios.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isAdmin && authToken) {
+      loadUsers();
+    }
+  }, [isAdmin, authToken]);
+
+  async function toggleSponsor(u: AdminUser) {
+    if (!API_BASE_URL || !authToken) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ isSponsor: !u.is_sponsor }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        Alert.alert(
+          "Error",
+          data && data.error
+            ? String(data.error)
+            : "No se ha podido actualizar el usuario."
+        );
+        return;
+      }
+      const data = await res.json();
+      const updated: AdminUser = data.user;
+      setUsers((prev) =>
+        prev.map((x) => (x.id === updated.id ? updated : x))
+      );
+    } catch (e) {
+      Alert.alert("Error", "No se ha podido actualizar el usuario.");
+    }
+  }
+
+  async function toggleAdmin(u: AdminUser) {
+    if (!API_BASE_URL || !authToken) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ isAdmin: !u.is_admin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        Alert.alert(
+          "Error",
+          data && data.error
+            ? String(data.error)
+            : "No se ha podido actualizar el usuario."
+        );
+        return;
+      }
+      const updated: AdminUser = data.user;
+      setUsers((prev) =>
+        prev.map((x) => (x.id === updated.id ? updated : x))
+      );
+    } catch (e) {
+      Alert.alert("Error", "No se ha podido actualizar el usuario.");
+    }
+  }
+
+  async function deleteUser(u: AdminUser) {
+    if (!API_BASE_URL || !authToken) return;
+
+    if (u.email === userEmail) {
+      Alert.alert(
+        "No permitido",
+        "No puedes borrarte a ti mismo desde aquí."
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Borrar usuario",
+      `¿Seguro que quieres borrar la cuenta de ${u.email}? Esta acción no se puede deshacer.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Borrar",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const res = await fetch(
+                `${API_BASE_URL}/admin/users/${u.id}`,
+                {
+                  method: "DELETE",
+                  headers: {
+                    Authorization: `Bearer ${authToken}`,
+                  },
+                }
+              );
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                Alert.alert(
+                  "Error",
+                  data && data.error
+                    ? String(data.error)
+                    : "No se ha podido borrar el usuario."
+                );
+                return;
+              }
+              setUsers((prev) => prev.filter((x) => x.id !== u.id));
+            } catch (e) {
+              Alert.alert(
+                "Error",
+                "No se ha podido borrar el usuario por un error de red."
+              );
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <AppHeader navigation={navigation} />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Panel de administración</Text>
+            <Text style={styles.sectionBody}>
+              Esta sección está disponible solo para usuarios administradores.
+            </Text>
+          </View>
+          <AppFooter />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <AppHeader navigation={navigation} />
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Usuarios registrados</Text>
+          <Text style={styles.sectionBody}>
+            Desde aquí puedes ver las cuentas creadas, marcar patrocinadores y
+            añadir o quitar admins (protegiendo siempre al último admin).
+          </Text>
+
+          {loading && (
+            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
+              Cargando usuarios...
+            </Text>
+          )}
+
+          {error && (
+            <Text style={[styles.errorText, { marginTop: 8 }]}>{error}</Text>
+          )}
+
+          {!loading && users.length === 0 && !error && (
+            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
+              No hay usuarios registrados todavía.
+            </Text>
+          )}
+
+          {users.map((u) => (
+            <View key={u.id} style={styles.adminUserRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.adminUserEmail}>{u.email}</Text>
+                {u.name && (
+                  <Text style={styles.adminUserMeta}>Nombre: {u.name}</Text>
+                )}
+                {u.gender && (
+                  <Text style={styles.adminUserMeta}>
+                    Género: {u.gender}
+                  </Text>
+                )}
+                {u.country && (
+                  <Text style={styles.adminUserMeta}>
+                    País: {u.country}
+                  </Text>
+                )}
+                <Text style={styles.adminUserMeta}>
+                  Rol: {u.is_admin ? "Admin" : "Usuario normal"}
+                </Text>
+                <Text style={styles.adminUserMeta}>
+                  Patrocinio: {u.is_sponsor ? "Sí" : "No"}
+                </Text>
+              </View>
+
+              <View style={styles.adminUserButtons}>
+                <TouchableOpacity
+                  style={styles.adminChip}
+                  onPress={() => toggleSponsor(u)}
+                >
+                  <Text style={styles.adminChipText}>
+                    {u.is_sponsor ? "Quitar sponsor" : "Hacer sponsor"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.adminChip}
+                  onPress={() => toggleAdmin(u)}
+                >
+                  <Text style={styles.adminChipText}>
+                    {u.is_admin ? "Quitar admin" : "Hacer admin"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.adminDeleteButton}
+                  onPress={() => deleteUser(u)}
+                >
+                  <Text style={styles.adminDeleteButtonText}>Borrar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+
+          <TouchableOpacity
+            style={styles.reloadUsersButton}
+            onPress={loadUsers}
+          >
+            <Text style={styles.reloadUsersButtonText}>
+              Recargar lista de usuarios
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <AppFooter />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
 // ---------- TABS PRINCIPALES ----------
 
 function AppTabs() {
@@ -1623,16 +1879,13 @@ function AppTabs() {
 
 // ---------- NAVEGACIÓN RAÍZ + CONTEXTO AUTH ----------
 
-// ---------- NAVEGACIÓN RAÍZ + CONTEXTO AUTH ----------
-
 export default function MainNavigation() {
   const [ready, setReady] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string | null>(null);
-  const [userGender, setUserGender] = useState<UserGender | null>(null);
-  const [userCountry, setUserCountry] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
   const [isSponsor, setIsSponsorState] = useState(false);
+  const [isAdmin, setIsAdminState] = useState(false);
   const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState(30);
 
   useEffect(() => {
@@ -1640,26 +1893,17 @@ export default function MainNavigation() {
       try {
         const token = await AsyncStorage.getItem("calmward_token");
         const email = await AsyncStorage.getItem("calmward_email");
-        const name = await AsyncStorage.getItem("calmward_name");
-        const gender = await AsyncStorage.getItem("calmward_gender");
-        const country = await AsyncStorage.getItem("calmward_country");
         const sponsorFlag = await AsyncStorage.getItem("calmward_is_sponsor");
+        const adminFlag = await AsyncStorage.getItem("calmward_is_admin");
         const timeoutStr = await AsyncStorage.getItem(
           "calmward_session_timeout_minutes"
         );
 
         setIsLogged(!!token);
+        setAuthToken(token);
         setUserEmail(email);
-        setUserName(name || null);
-
-        if (gender === "male" || gender === "female" || gender === "other") {
-          setUserGender(gender);
-        } else {
-          setUserGender(null);
-        }
-
-        setUserCountry(country || null);
         setIsSponsorState(sponsorFlag === "1");
+        setIsAdminState(adminFlag === "1");
 
         if (timeoutStr) {
           const parsed = parseInt(timeoutStr, 10);
@@ -1669,11 +1913,10 @@ export default function MainNavigation() {
         }
       } catch (e) {
         setIsLogged(false);
+        setAuthToken(null);
         setUserEmail(null);
-        setUserName(null);
-        setUserGender(null);
-        setUserCountry(null);
         setIsSponsorState(false);
+        setIsAdminState(false);
         setSessionTimeoutMinutesState(30);
       } finally {
         setReady(true);
@@ -1699,15 +1942,12 @@ export default function MainNavigation() {
           await AsyncStorage.removeItem("calmward_token");
           await AsyncStorage.removeItem("calmward_email");
           await AsyncStorage.removeItem("calmward_is_sponsor");
-          await AsyncStorage.removeItem("calmward_name");
-          await AsyncStorage.removeItem("calmward_gender");
-          await AsyncStorage.removeItem("calmward_country");
+          await AsyncStorage.removeItem("calmward_is_admin");
           setIsLogged(false);
+          setAuthToken(null);
           setUserEmail(null);
-          setUserName(null);
-          setUserGender(null);
-          setUserCountry(null);
           setIsSponsorState(false);
+          setIsAdminState(false);
         }
       } catch {
         // ignoramos
@@ -1721,20 +1961,15 @@ export default function MainNavigation() {
     () => ({
       isLogged,
       userEmail,
-      userName,
-      userGender,
-      userCountry,
+      authToken,
       isSponsor,
+      isAdmin,
       sessionTimeoutMinutes,
       login: async (
         email: string,
         token: string,
         sponsorFlag?: boolean,
-        profile?: {
-          name?: string | null;
-          gender?: UserGender | null;
-          country?: string | null;
-        }
+        adminFlag?: boolean
       ) => {
         await AsyncStorage.setItem("calmward_token", token);
         await AsyncStorage.setItem("calmward_email", email);
@@ -1742,7 +1977,6 @@ export default function MainNavigation() {
           "calmward_last_activity",
           String(Date.now())
         );
-
         if (typeof sponsorFlag === "boolean") {
           await AsyncStorage.setItem(
             "calmward_is_sponsor",
@@ -1750,54 +1984,28 @@ export default function MainNavigation() {
           );
           setIsSponsorState(sponsorFlag);
         }
-
-        if (profile) {
-          const safeName = profile.name ? profile.name.trim() : "";
-          const safeCountry = profile.country ? profile.country.trim() : "";
-          const g = profile.gender;
-
-          if (safeName) {
-            await AsyncStorage.setItem("calmward_name", safeName);
-            setUserName(safeName);
-          } else {
-            await AsyncStorage.removeItem("calmward_name");
-            setUserName(null);
-          }
-
-          if (safeCountry) {
-            await AsyncStorage.setItem("calmward_country", safeCountry);
-            setUserCountry(safeCountry);
-          } else {
-            await AsyncStorage.removeItem("calmward_country");
-            setUserCountry(null);
-          }
-
-          if (g === "male" || g === "female" || g === "other") {
-            await AsyncStorage.setItem("calmward_gender", g);
-            setUserGender(g);
-          } else {
-            await AsyncStorage.removeItem("calmward_gender");
-            setUserGender(null);
-          }
+        if (typeof adminFlag === "boolean") {
+          await AsyncStorage.setItem(
+            "calmward_is_admin",
+            adminFlag ? "1" : "0"
+          );
+          setIsAdminState(adminFlag);
         }
-
         setIsLogged(true);
+        setAuthToken(token);
         setUserEmail(email);
       },
       logout: async () => {
         await AsyncStorage.removeItem("calmward_token");
         await AsyncStorage.removeItem("calmward_email");
         await AsyncStorage.removeItem("calmward_is_sponsor");
+        await AsyncStorage.removeItem("calmward_is_admin");
         await AsyncStorage.removeItem("calmward_last_activity");
-        await AsyncStorage.removeItem("calmward_name");
-        await AsyncStorage.removeItem("calmward_gender");
-        await AsyncStorage.removeItem("calmward_country");
         setIsLogged(false);
+        setAuthToken(null);
         setUserEmail(null);
-        setUserName(null);
-        setUserGender(null);
-        setUserCountry(null);
         setIsSponsorState(false);
+        setIsAdminState(false);
       },
       setSponsor: async (value: boolean) => {
         await AsyncStorage.setItem("calmward_is_sponsor", value ? "1" : "0");
@@ -1812,15 +2020,7 @@ export default function MainNavigation() {
         setSessionTimeoutMinutesState(safe);
       },
     }),
-    [
-      isLogged,
-      userEmail,
-      userName,
-      userGender,
-      userCountry,
-      isSponsor,
-      sessionTimeoutMinutes,
-    ]
+    [isLogged, userEmail, authToken, isSponsor, isAdmin, sessionTimeoutMinutes]
   );
 
   if (!ready) {
@@ -1833,30 +2033,31 @@ export default function MainNavigation() {
 
   return (
     <AuthContext.Provider value={authContext}>
-      <Stack.Navigator
-        screenOptions={{ headerShown: false }}
-        initialRouteName="Root"
-      >
-        {/* Siempre entras a las tabs, estés logueado o no */}
-        <Stack.Screen name="Root" component={AppTabs} />
-
-        {/* Pantalla de Auth accesible desde el header/botones */}
-        <Stack.Screen name="Auth" component={AuthScreen} />
-
-        {/* Resto de pantallas secundarias */}
-        <Stack.Screen name="Contacto" component={ContactScreen} />
-        <Stack.Screen name="Legal" component={LegalScreen} />
-        <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
-        <Stack.Screen
-          name="SponsorPayment"
-          component={SponsorPaymentScreen}
-        />
-        <Stack.Screen name="Settings" component={SettingsScreen} />
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {isLogged ? (
+          <>
+            <Stack.Screen name="Root" component={AppTabs} />
+            <Stack.Screen name="Contacto" component={ContactScreen} />
+            <Stack.Screen name="Legal" component={LegalScreen} />
+            <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
+            <Stack.Screen
+              name="SponsorPayment"
+              component={SponsorPaymentScreen}
+            />
+            <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
+          </>
+        ) : (
+          <>
+            <Stack.Screen name="Auth" component={AuthScreen} />
+            <Stack.Screen name="Contacto" component={ContactScreen} />
+            <Stack.Screen name="Legal" component={LegalScreen} />
+          </>
+        )}
       </Stack.Navigator>
     </AuthContext.Provider>
   );
 }
-
 
 // ---------- ESTILOS ----------
 
@@ -2057,40 +2258,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#DC2626",
   },
+  passwordHint: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6B7280",
+  },
   genderRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: 8,
     marginTop: 4,
   },
   genderChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: "#D1D5DB",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
     backgroundColor: "#F9FAFB",
   },
   genderChipActive: {
+    backgroundColor: "#0EA5E9",
     borderColor: "#0EA5E9",
-    backgroundColor: "#E0F2FE",
   },
   genderChipText: {
     fontSize: 12,
     color: "#4B5563",
+    fontWeight: "500",
   },
   genderChipTextActive: {
-    color: "#0369A1",
-    fontWeight: "600",
-  },
-  forgotPasswordBtn: {
-    alignSelf: "flex-end",
-    marginTop: 6,
-  },
-  forgotPasswordText: {
-    fontSize: 12,
-    color: "#0EA5E9",
-    fontWeight: "500",
+    color: "#FFFFFF",
   },
   // Talk
   modeRow: {
@@ -2288,6 +2484,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   sponsorStatsBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  adminPanelButton: {
+    marginTop: 12,
+    backgroundColor: "#111827",
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: "center",
+  },
+  adminPanelButtonText: {
     color: "#FFFFFF",
     fontWeight: "600",
   },
@@ -2493,5 +2700,83 @@ const styles = StyleSheet.create({
   },
   settingsOptionTextActive: {
     color: "#FFFFFF",
+  },
+  // Admin panel
+  adminUserRow: {
+    flexDirection: "row",
+    marginTop: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+    gap: 8,
+  },
+  adminUserEmail: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  adminUserMeta: {
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  adminUserButtons: {
+    justifyContent: "center",
+    alignItems: "flex-end",
+    gap: 4,
+  },
+  adminChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#E5E7EB",
+  },
+  adminChipText: {
+    fontSize: 11,
+    color: "#111827",
+    fontWeight: "500",
+  },
+  adminDeleteButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#DC2626",
+  },
+  adminDeleteButtonText: {
+    fontSize: 11,
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  reloadUsersButton: {
+    marginTop: 12,
+    backgroundColor: "#0EA5E9",
+    borderRadius: 999,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  reloadUsersButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  // Sponsor stats
+  summaryRow: {
+    flexDirection: "row",
+    marginTop: 12,
+    gap: 8,
+  },
+  summaryBox: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 12,
+    padding: 12,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  summaryValue: {
+    marginTop: 4,
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
   },
 });

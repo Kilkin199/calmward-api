@@ -1,10 +1,11 @@
 // api/index.js
-// Calmward API: IA Groq + Auth con PostgreSQL + Admin básico
+// Servidor Calmward: IA Groq + Auth con PostgreSQL + panel admin
 
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 
 // Polyfill de fetch para Node en Render (por si no está definido)
 const fetch = (...args) =>
@@ -16,52 +17,40 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// ---------- CONFIG DB ----------
+// ---------- CONFIG DB (PostgreSQL) ----------
 
-const DATABASE_URL = process.env.DATABASE_URL;
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || null;
-
+const DATABASE_URL = process.env.DATABASE_URL || null;
 let pool = null;
 
-if (!DATABASE_URL) {
-  console.warn(
-    "[Calmward API] WARNING: No hay DATABASE_URL. Auth real no funcionará."
-  );
-} else {
+if (DATABASE_URL) {
   pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // típico en Render
+    ssl: { rejectUnauthorized: false },
   });
+  console.log("[Calmward API] DATABASE_URL detectada, usando PostgreSQL.");
+} else {
+  console.warn(
+    "[Calmward API] WARNING: No hay DATABASE_URL. Auth real NO funcionará."
+  );
 }
 
-// Crea/actualiza tablas básicas si no existen
-async function ensureSchema() {
+// Crear / asegurar tablas y admin inicial
+async function ensureDb() {
   if (!pool) return;
 
   const sql = `
-    -- Tabla de usuarios
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
+      name TEXT,
+      gender TEXT,
+      country TEXT,
       is_sponsor BOOLEAN NOT NULL DEFAULT FALSE,
       is_admin  BOOLEAN NOT NULL DEFAULT FALSE,
-      name      TEXT,
-      gender    TEXT,
-      country   TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Asegurar columnas por si la tabla ya existía de antes
-    ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS name      TEXT,
-      ADD COLUMN IF NOT EXISTS gender    TEXT,
-      ADD COLUMN IF NOT EXISTS country   TEXT,
-      ADD COLUMN IF NOT EXISTS is_sponsor BOOLEAN NOT NULL DEFAULT FALSE,
-      ADD COLUMN IF NOT EXISTS is_admin  BOOLEAN NOT NULL DEFAULT FALSE,
-      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-
-    -- Tabla de sesiones (tokens simples)
     CREATE TABLE IF NOT EXISTS sessions (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -71,19 +60,30 @@ async function ensureSchema() {
   `;
 
   await pool.query(sql);
-  console.log("[Calmward API] Tablas users/sessions listas");
+
+  // Si no hay ningún admin, marcamos al primer usuario como admin
+  await pool.query(`
+    UPDATE users
+    SET is_admin = TRUE
+    WHERE id = (
+      SELECT id FROM users ORDER BY id ASC LIMIT 1
+    )
+    AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = TRUE);
+  `);
+
+  console.log("[Calmward API] Tablas users/sessions listas. Admin inicial asignado (si había usuarios).");
 }
 
-if (pool) {
-  ensureSchema().catch((e) =>
-    console.error("[Calmward API] Error en ensureSchema:", e)
-  );
-}
-
-// ---------- HELPERS DB / AUTH ----------
-
+// Helpers DB
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
+}
+
+function isStrongPassword(pwd) {
+  if (typeof pwd !== "string") return false;
+  if (pwd.length < 10) return false;
+  if (!/[A-Z]/.test(pwd)) return false; // al menos una mayúscula
+  return true;
 }
 
 function randomToken() {
@@ -94,101 +94,109 @@ function randomToken() {
   );
 }
 
-// Validación de contraseña: mínimo 10 caracteres y al menos 1 mayúscula
-function isValidPassword(password) {
-  if (typeof password !== "string") return false;
-  if (password.length < 10) return false;
-  // Mayúsculas normales y acentuadas / Ñ
-  if (!/[A-ZÁÉÍÓÚÑ]/.test(password)) return false;
-  return true;
+async function findUserByEmail(email) {
+  if (!pool) return null;
+  const norm = normalizeEmail(email);
+  const q = await pool.query(
+    "SELECT * FROM users WHERE email = $1 LIMIT 1",
+    [norm]
+  );
+  return q.rows[0] || null;
 }
 
-// Middleware: autenticar por token de sesión (Authorization: Bearer <token>)
-async function authMiddleware(req, res, next) {
-  if (!pool) {
-    return res
-      .status(500)
-      .json({ error: "No hay base de datos configurada en el servidor." });
-  }
+async function createUserWithProfile(email, password, name, gender, country) {
+  if (!pool) throw new Error("DB no configurada.");
+  const norm = normalizeEmail(email);
+  const hash = await bcrypt.hash(password, 10);
+  const q = await pool.query(
+    `
+      INSERT INTO users (email, password_hash, name, gender, country)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (email) DO NOTHING
+      RETURNING *;
+    `,
+    [norm, hash, name || null, gender || null, country || null]
+  );
+  return q.rows[0] || null;
+}
 
-  const authHeader = req.headers.authorization || "";
-  const parts = authHeader.split(" ");
-  const token =
-    parts.length === 2 && parts[0] === "Bearer" ? parts[1].trim() : null;
+async function createSession(userId) {
+  if (!pool) throw new Error("DB no configurada");
+  const token = randomToken();
+  await pool.query(
+    `
+      INSERT INTO sessions (user_id, token)
+      VALUES ($1, $2);
+    `,
+    [userId, token]
+  );
+  return token;
+}
 
-  if (!token) {
-    return res.status(401).json({
-      error: "Falta token de sesión (usa Authorization: Bearer <token>).",
-    });
-  }
-
-  try {
-    await ensureSchema();
-
-    const result = await pool.query(
-      `
-      SELECT 
-        s.user_id,
-        u.email,
-        u.name,
-        u.gender,
-        u.country,
-        u.is_sponsor,
-        u.is_admin
+async function getUserFromToken(token) {
+  if (!pool || !token) return null;
+  const q = await pool.query(
+    `
+      SELECT u.id, u.email, u.name, u.gender, u.country,
+             u.is_sponsor, u.is_admin, u.created_at
       FROM sessions s
       JOIN users u ON u.id = s.user_id
       WHERE s.token = $1
+      LIMIT 1;
     `,
-      [token]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(401).json({ error: "Sesión no válida o caducada." });
-    }
-
-    const row = result.rows[0];
-    req.user = {
-      id: row.user_id,
-      email: row.email,
-      name: row.name,
-      gender: row.gender,
-      country: row.country,
-      isSponsor: row.is_sponsor,
-      isAdmin: row.is_admin,
-    };
-
-    next();
-  } catch (err) {
-    console.error("Error en authMiddleware:", err);
-    return res
-      .status(500)
-      .json({ error: "Error interno al validar la sesión." });
-  }
+    [token]
+  );
+  return q.rows[0] || null;
 }
 
-function requireAdmin(req, res, next) {
-  if (!req.user || !req.user.isAdmin) {
+// Middleware para rutas de admin
+async function requireAdmin(req, res, next) {
+  try {
+    if (!pool || !DATABASE_URL) {
+      return res.status(500).json({
+        error: "No hay base de datos configurada en el servidor.",
+      });
+    }
+
+    const authHeader = req.headers["authorization"] || "";
+    const parts = authHeader.split(" ");
+    if (parts.length !== 2 || parts[0] !== "Bearer") {
+      return res.status(401).json({ error: "Falta token de sesión." });
+    }
+    const token = parts[1].trim();
+    if (!token) {
+      return res.status(401).json({ error: "Token vacío." });
+    }
+
+    const user = await getUserFromToken(token);
+    if (!user || !user.is_admin) {
+      return res
+        .status(403)
+        .json({ error: "Solo un usuario administrador puede hacer esto." });
+    }
+
+    req.adminUser = user;
+    next();
+  } catch (err) {
+    console.error("Error en requireAdmin:", err);
     return res
-      .status(403)
-      .json({ error: "Solo el administrador puede hacer esta acción." });
+      .status(500)
+      .json({ error: "Error interno de autenticación de admin." });
   }
-  next();
 }
 
 // ---------- CONFIG GROQ IA ----------
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-// IMPORTANTE: este nombre de modelo debe existir en Groq
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
-// Prompts (dos personalidades distintas)
+// Prompts (personalidades diferentes)
 
 const SYSTEM_LISTEN = `
-Eres una inteligencia artificial de apoyo emocional llamada Calmward.
-Tu función es ESCUCHAR y ACOMPAÑAR.
+Eres Calmward, una IA de apoyo emocional centrada en ESCUCHAR y ACOMPAÑAR.
 
-Modo actual: "solo escúchame".
+Tu modo actual es: "solo escúchame".
 
 Estilo:
 - Hablas como una persona cercana, cálida y respetuosa.
@@ -197,13 +205,14 @@ Estilo:
 - Puedes hacer alguna pregunta suave para entender mejor, pero sin interrogar.
 
 Límites:
-- No eres psicólogo ni psiquiatra ni médico. No haces diagnósticos ni das consejos médicos.
-- No prometes resultados seguros ("todo va a salir bien").
+- No eres psicólogo, psiquiatra ni médico. No haces diagnósticos ni das consejos médicos.
+- No prometes resultados seguros ("todo va a salir bien seguro").
 - No minimizas ("no es para tanto", "hay gente peor").
 
 Objetivo:
 - Que la persona sienta que alguien está con ella en lo que cuenta.
 - Devolverle sus emociones con otras palabras para que se sienta comprendida.
+- No des listas de tareas ni "planes", solo acompañamiento y comprensión.
 `;
 
 const SYSTEM_HELP = `
@@ -215,22 +224,23 @@ Tu función aquí es:
 
 Estilo:
 - Hablas en español cercano y tranquilo.
-- Estructuras tus respuestas: primero demuestras que has entendido, luego ordenas, luego propones 1-2 acciones pequeñas.
-- Puedes usar viñetas o pasos numerados si ayuda, pero sin hacer un sermón.
+- Estructuras tus respuestas: primero demuestras que has entendido, luego ordenas, luego propones 1–2 acciones pequeñas.
+- Puedes usar viñetas o pasos numerados cuando propongas acciones, pero sin convertirlo en un sermón.
 
 Límites:
 - No eres profesional sanitario, no haces diagnósticos ni recomendaciones médicas.
 - Si aparecen ideas de autolesión, suicidio o violencia, anima a buscar ayuda profesional o servicios de emergencia, pero sin dar instrucciones médicas.
 
-Importante:
+Muy importante:
 - Siempre que propongas acciones, hazlas pequeñas y concretas, por ejemplo:
   - "Escribir 3 frases sobre lo que sientes ahora mismo."
   - "Mandar un mensaje a una persona de confianza."
   - "Apuntar una sola cosa que quieras probar esta semana."
+
 - Evita frases hechas genéricas; responde de forma específica a lo que la persona ha contado.
 `;
 
-// Normaliza historial que pueda venir del cliente
+// Limpia historial que pueda venir del cliente
 function normalizeHistory(history) {
   if (!Array.isArray(history)) return [];
   return history
@@ -247,8 +257,8 @@ app.get("/", async (_req, res) => {
   let dbOk = false;
   if (pool) {
     try {
-      await ensureSchema();
-      await pool.query("SELECT 1");
+      await ensureDb();
+      await pool.query("SELECT 1;");
       dbOk = true;
     } catch {
       dbOk = false;
@@ -266,21 +276,26 @@ app.get("/", async (_req, res) => {
   });
 });
 
-// ---------- AUTH: REGISTRO (CREAR CUENTA) ----------
-// Usado desde la pestaña "Crear cuenta"
+// ---------- AUTH: REGISTER + LOGIN EN UNO ----------
 
 app.post("/auth/register-and-login", async (req, res) => {
-  if (!pool || !DATABASE_URL) {
-    return res.status(500).json({
-      error:
-        "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
-    });
-  }
-
   try {
-    await ensureSchema();
+    if (!pool || !DATABASE_URL) {
+      return res.status(500).json({
+        error:
+          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
+      });
+    }
 
-    const { email, password, name, gender, country } = req.body || {};
+    await ensureDb();
+
+    const {
+      email,
+      password,
+      name = "",
+      gender = "",
+      country = "",
+    } = req.body || {};
 
     const normEmail = normalizeEmail(email);
     const rawPassword = String(password || "");
@@ -289,128 +304,113 @@ app.post("/auth/register-and-login", async (req, res) => {
       return res.status(400).json({ error: "Correo no válido." });
     }
 
-    if (!isValidPassword(rawPassword)) {
+    if (!isStrongPassword(rawPassword)) {
       return res.status(400).json({
         error:
-          "La contraseña debe tener al menos 10 caracteres y una letra mayúscula.",
+          "La contraseña debe tener al menos 10 caracteres y contener al menos una letra mayúscula.",
       });
     }
 
-    // ¿Ya existe el usuario?
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [normEmail]
-    );
+    let user = await findUserByEmail(normEmail);
 
-    if (existing.rowCount > 0) {
-      return res
-        .status(400)
-        .json({ error: "Ya existe una cuenta con ese correo." });
+    if (!user) {
+      // Crear usuario nuevo
+      user = await createUserWithProfile(
+        normEmail,
+        rawPassword,
+        String(name || "").trim() || null,
+        String(gender || "").trim() || null,
+        String(country || "").trim() || null
+      );
+      if (!user) {
+        // condición rara: alguien lo creó justo antes
+        user = await findUserByEmail(normEmail);
+      }
+    } else {
+      // Usuario ya existe: comprobar contraseña antes de loguear
+      const ok = await bcrypt.compare(rawPassword, user.password_hash);
+      if (!ok) {
+        return res
+          .status(401)
+          .json({ error: "Correo o contraseña incorrectos." });
+      }
     }
 
-    const hash = await bcrypt.hash(rawPassword, 10);
+    if (!user) {
+      return res.status(500).json({
+        error: "No se ha podido crear/recuperar el usuario.",
+      });
+    }
 
-    // is_admin si coincide con ADMIN_EMAIL
-    const isAdmin =
-      ADMIN_EMAIL && normEmail === ADMIN_EMAIL.toLowerCase() ? true : false;
+    // Garantizar que existe al menos un admin
+    await ensureDb();
 
-    const inserted = await pool.query(
-      `
-      INSERT INTO users (email, password_hash, name, gender, country, is_sponsor, is_admin)
-      VALUES ($1, $2, $3, $4, $5, FALSE, $6)
-      RETURNING id, email, name, gender, country, is_sponsor, is_admin
-    `,
-      [normEmail, hash, name || null, gender || null, country || null, isAdmin]
-    );
-
-    const user = inserted.rows[0];
-
-    const token = randomToken();
-    await pool.query(
-      "INSERT INTO sessions (user_id, token) VALUES ($1, $2)",
-      [user.id, token]
-    );
+    const token = await createSession(user.id);
 
     return res.json({
       token,
       email: user.email,
+      isSponsor: !!user.is_sponsor,
+      isAdmin: !!user.is_admin,
       name: user.name,
       gender: user.gender,
       country: user.country,
-      isSponsor: user.is_sponsor,
-      isAdmin: user.is_admin,
     });
   } catch (err) {
     console.error("Error en /auth/register-and-login:", err);
     return res.status(500).json({
-      error: "Ha habido un problema al crear la cuenta. Inténtalo de nuevo.",
+      error: "Ha habido un problema al registrar/iniciar sesión.",
     });
   }
 });
 
-// ---------- AUTH: LOGIN (INICIAR SESIÓN) ----------
-// Usado desde la pestaña "Iniciar sesión"
+// ---------- AUTH: SOLO LOGIN ----------
 
 app.post("/auth/login", async (req, res) => {
-  if (!pool || !DATABASE_URL) {
-    return res.status(500).json({
-      error:
-        "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
-    });
-  }
-
   try {
-    await ensureSchema();
+    if (!pool || !DATABASE_URL) {
+      return res.status(500).json({
+        error:
+          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
+      });
+    }
+
+    await ensureDb();
 
     const { email, password } = req.body || {};
-
     const normEmail = normalizeEmail(email);
     const rawPassword = String(password || "");
 
     if (!normEmail || !rawPassword) {
-      return res.status(400).json({
-        error: "Debes indicar correo y contraseña.",
-      });
+      return res
+        .status(400)
+        .json({ error: "Debes indicar correo y contraseña." });
     }
 
-    const existing = await pool.query(
-      `
-      SELECT id, email, password_hash, name, gender, country, is_sponsor, is_admin
-      FROM users
-      WHERE email = $1
-    `,
-      [normEmail]
-    );
-
-    if (existing.rowCount === 0) {
-      return res.status(401).json({
-        error: "El correo o la contraseña no son correctos.",
-      });
+    const user = await findUserByEmail(normEmail);
+    if (!user) {
+      return res
+        .status(401)
+        .json({ error: "No existe ninguna cuenta con ese correo." });
     }
-
-    const user = existing.rows[0];
 
     const ok = await bcrypt.compare(rawPassword, user.password_hash);
     if (!ok) {
-      return res.status(401).json({
-        error: "El correo o la contraseña no son correctos.",
-      });
+      return res
+        .status(401)
+        .json({ error: "Correo o contraseña incorrectos." });
     }
 
-    const token = randomToken();
-    await pool.query(
-      "INSERT INTO sessions (user_id, token) VALUES ($1, $2)",
-      [user.id, token]
-    );
+    const token = await createSession(user.id);
 
     return res.json({
       token,
       email: user.email,
+      isSponsor: !!user.is_sponsor,
+      isAdmin: !!user.is_admin,
       name: user.name,
       gender: user.gender,
       country: user.country,
-      isSponsor: user.is_sponsor,
-      isAdmin: user.is_admin,
     });
   } catch (err) {
     console.error("Error en /auth/login:", err);
@@ -419,112 +419,6 @@ app.post("/auth/login", async (req, res) => {
     });
   }
 });
-
-// ---------- ENDPOINTS ADMIN (panel de usuarios) ----------
-// Más adelante podrás consumirlos desde una pantalla "Admin" en la app
-
-// Listar usuarios
-app.get("/admin/users", authMiddleware, requireAdmin, async (req, res) => {
-  try {
-    await ensureSchema();
-    const result = await pool.query(
-      `
-      SELECT id, email, name, gender, country, is_sponsor, is_admin, created_at
-      FROM users
-      ORDER BY created_at DESC
-    `
-    );
-    return res.json({ users: result.rows });
-  } catch (err) {
-    console.error("Error en GET /admin/users:", err);
-    return res
-      .status(500)
-      .json({ error: "No se ha podido obtener la lista de usuarios." });
-  }
-});
-
-// Actualizar flags básicos (is_sponsor, is_admin)
-app.patch(
-  "/admin/users/:id",
-  authMiddleware,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      await ensureSchema();
-
-      const userId = parseInt(req.params.id, 10);
-      if (!userId || userId <= 0) {
-        return res.status(400).json({ error: "ID de usuario no válido." });
-      }
-
-      const { isSponsor, isAdmin } = req.body || {};
-
-      const result = await pool.query(
-        `
-        UPDATE users
-        SET
-          is_sponsor = COALESCE($2, is_sponsor),
-          is_admin   = COALESCE($3, is_admin)
-        WHERE id = $1
-        RETURNING id, email, name, gender, country, is_sponsor, is_admin, created_at
-      `,
-        [userId, typeof isSponsor === "boolean" ? isSponsor : null,
-          typeof isAdmin === "boolean" ? isAdmin : null]
-      );
-
-      if (result.rowCount === 0) {
-        return res.status(404).json({ error: "Usuario no encontrado." });
-      }
-
-      return res.json({ user: result.rows[0] });
-    } catch (err) {
-      console.error("Error en PATCH /admin/users/:id:", err);
-      return res
-        .status(500)
-        .json({ error: "No se ha podido actualizar el usuario." });
-    }
-  }
-);
-
-// Eliminar usuario
-app.delete(
-  "/admin/users/:id",
-  authMiddleware,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      await ensureSchema();
-
-      const userId = parseInt(req.params.id, 10);
-      if (!userId || userId <= 0) {
-        return res.status(400).json({ error: "ID de usuario no válido." });
-      }
-
-      // Opcional: evitar que el admin se borre a sí mismo
-      if (req.user && req.user.id === userId) {
-        return res.status(400).json({
-          error: "No puedes borrar la cuenta del administrador actual.",
-        });
-      }
-
-      await pool.query("DELETE FROM sessions WHERE user_id = $1", [userId]);
-      const result = await pool.query("DELETE FROM users WHERE id = $1", [
-        userId,
-      ]);
-
-      if (result.rowCount === 0) {
-        return res.status(404).json({ error: "Usuario no encontrado." });
-      }
-
-      return res.json({ ok: true });
-    } catch (err) {
-      console.error("Error en DELETE /admin/users/:id:", err);
-      return res
-        .status(500)
-        .json({ error: "No se ha podido eliminar el usuario." });
-    }
-  }
-);
 
 // ---------- IA: POST /ai/talk ----------
 
@@ -594,10 +488,144 @@ app.post("/ai/talk", async (req, res) => {
   }
 });
 
-// ---------- ARRANQUE ----------
+// ---------- ADMIN: GESTIÓN DE USUARIOS ----------
+
+// Lista de usuarios (solo admin)
+app.get("/admin/users", requireAdmin, async (req, res) => {
+  try {
+    await ensureDb();
+    const q = await pool.query(
+      `
+      SELECT id, email, name, gender, country,
+             is_sponsor, is_admin, created_at
+      FROM users
+      ORDER BY id ASC;
+    `
+    );
+    return res.json({ users: q.rows });
+  } catch (err) {
+    console.error("Error en GET /admin/users:", err);
+    return res.status(500).json({
+      error: "No se ha podido recuperar la lista de usuarios.",
+    });
+  }
+});
+
+// Modificar usuario (is_sponsor, is_admin, perfil)
+app.patch("/admin/users/:id", requireAdmin, async (req, res) => {
+  try {
+    await ensureDb();
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({ error: "ID de usuario no válido." });
+    }
+
+    const { isSponsor, isAdmin, name, gender, country } = req.body || {};
+
+    // Comprobamos si es el último admin
+    const adminsQ = await pool.query(
+      "SELECT id FROM users WHERE is_admin = TRUE;"
+    );
+    const adminIds = adminsQ.rows.map((r) => r.id);
+
+    const updatingLastAdmin =
+      adminIds.length === 1 && adminIds[0] === id && isAdmin === false;
+
+    if (updatingLastAdmin) {
+      return res.status(400).json({
+        error:
+          "No puedes quitar el rol de admin al único administrador que existe.",
+      });
+    }
+
+    const q = await pool.query(
+      `
+      UPDATE users
+      SET
+        is_sponsor = COALESCE($2, is_sponsor),
+        is_admin   = COALESCE($3, is_admin),
+        name       = COALESCE($4, name),
+        gender     = COALESCE($5, gender),
+        country    = COALESCE($6, country)
+      WHERE id = $1
+      RETURNING id, email, name, gender, country,
+                is_sponsor, is_admin, created_at;
+    `,
+      [
+        id,
+        typeof isSponsor === "boolean" ? isSponsor : null,
+        typeof isAdmin === "boolean" ? isAdmin : null,
+        name ?? null,
+        gender ?? null,
+        country ?? null,
+      ]
+    );
+
+    if (q.rows.length === 0) {
+      return res.status(404).json({ error: "Usuario no encontrado." });
+    }
+
+    return res.json({ user: q.rows[0] });
+  } catch (err) {
+    console.error("Error en PATCH /admin/users/:id:", err);
+    return res.status(500).json({
+      error: "No se ha podido actualizar el usuario.",
+    });
+  }
+});
+
+// Borrar usuario (solo admin, protegiendo último admin)
+app.delete("/admin/users/:id", requireAdmin, async (req, res) => {
+  try {
+    await ensureDb();
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({ error: "ID de usuario no válido." });
+    }
+
+    // No permitir borrar al último admin
+    const adminsQ = await pool.query(
+      "SELECT id FROM users WHERE is_admin = TRUE;"
+    );
+    const adminIds = adminsQ.rows.map((r) => r.id);
+
+    const deletingLastAdmin =
+      adminIds.length === 1 && adminIds[0] === id;
+
+    if (deletingLastAdmin) {
+      return res.status(400).json({
+        error:
+          "No puedes borrar al único usuario administrador. Crea otro admin antes.",
+      });
+    }
+
+    await pool.query("DELETE FROM sessions WHERE user_id = $1;", [id]);
+    const del = await pool.query("DELETE FROM users WHERE id = $1;", [id]);
+
+    if (del.rowCount === 0) {
+      return res.status(404).json({ error: "Usuario no encontrado." });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Error en DELETE /admin/users/:id:", err);
+    return res.status(500).json({
+      error: "No se ha podido borrar el usuario.",
+    });
+  }
+});
+
+// ---------- ARRANQUE SERVIDOR ----------
 
 app.listen(PORT, () => {
   console.log(`Calmward API escuchando en puerto ${PORT}`);
   console.log(`? GROQ_MODEL = ${GROQ_MODEL}`);
-  console.log(`? DB = ${DATABASE_URL ? "OK" : "NO CONFIGURADA"}`);
+  if (DATABASE_URL) {
+    console.log("? DATABASE_URL configurado. Preparando tablas...");
+    ensureDb()
+      .then(() => console.log("Tablas listas (users, sessions)."))
+      .catch((err) => console.error("Error preparando la BD:", err));
+  } else {
+    console.log("? Sin DATABASE_URL: no habrá persistencia de usuarios.");
+  }
 });
