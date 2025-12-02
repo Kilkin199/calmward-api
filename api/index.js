@@ -47,9 +47,13 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Campo de ban (si no existe)
+    -- Campo de ban global (por si lo quieres usar en el futuro)
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- Campo de ban SOLO para la zona Comunidad
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS community_banned BOOLEAN NOT NULL DEFAULT FALSE;
 
     -- Tabla de sesiones
     CREATE TABLE IF NOT EXISTS sessions (
@@ -66,6 +70,14 @@ async function ensureSchema() {
       body TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Campos opcionales de toxicidad en posts
+    ALTER TABLE community_posts
+      ADD COLUMN IF NOT EXISTS toxicity_label TEXT;
+    ALTER TABLE community_posts
+      ADD COLUMN IF NOT EXISTS toxicity_score REAL;
+    ALTER TABLE community_posts
+      ADD COLUMN IF NOT EXISTS flagged_toxic BOOLEAN NOT NULL DEFAULT FALSE;
 
     -- Likes (un usuario solo puede likear una vez cada post)
     CREATE TABLE IF NOT EXISTS community_likes (
@@ -84,6 +96,14 @@ async function ensureSchema() {
       body TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Campos opcionales de toxicidad en comentarios
+    ALTER TABLE community_comments
+      ADD COLUMN IF NOT EXISTS toxicity_label TEXT;
+    ALTER TABLE community_comments
+      ADD COLUMN IF NOT EXISTS toxicity_score REAL;
+    ALTER TABLE community_comments
+      ADD COLUMN IF NOT EXISTS flagged_toxic BOOLEAN NOT NULL DEFAULT FALSE;
   `;
 
   try {
@@ -188,7 +208,12 @@ async function getUserFromToken(token) {
 
   const q = await pool.query(
     `
-      SELECT u.id, u.email, u.is_sponsor, u.is_banned
+      SELECT
+        u.id,
+        u.email,
+        u.is_sponsor,
+        u.is_banned,
+        u.community_banned
       FROM sessions s
       JOIN users u ON u.id = s.user_id
       WHERE s.token = $1
@@ -236,10 +261,20 @@ async function getUserFromRequestOrThrow(req, res) {
       return null;
     }
 
+    // Ban global (para un bloqueo más serio si lo usas algún día)
     if (user.is_banned) {
       res.status(403).json({
         error:
-          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+          "Tu cuenta ha sido bloqueada. Si crees que es un error, contacta con el soporte de Calmward.",
+      });
+      return null;
+    }
+
+    // Ban específico SOLO para la zona Comunidad
+    if (user.community_banned) {
+      res.status(403).json({
+        error:
+          "Tu cuenta ha sido bloqueada para la zona Comunidad por incumplir las normas.",
       });
       return null;
     }
@@ -274,19 +309,21 @@ function isToxicContent(text) {
   return badFragments.some((bad) => lower.includes(bad));
 }
 
-// Banear usuario y cerrar todas sus sesiones
+// Banear usuario para Comunidad y cerrar todas sus sesiones
 async function blockUserAndKillSessions(userId) {
   if (!pool || !userId) return;
 
+  // Ban SOLO para Comunidad
   await pool.query(
     `
       UPDATE users
-      SET is_banned = TRUE
+      SET community_banned = TRUE
       WHERE id = $1
     `,
     [userId]
   );
 
+  // Cerramos todas sus sesiones para que tenga que volver a iniciar
   await pool.query(
     `
       DELETE FROM sessions
@@ -295,7 +332,9 @@ async function blockUserAndKillSessions(userId) {
     [userId]
   );
 
-  console.log(`[Comunidad] Usuario ${userId} bloqueado y sesiones cerradas.`);
+  console.log(
+    `[Comunidad] Usuario ${userId} bloqueado para la Comunidad y sesiones cerradas.`
+  );
 }
 
 // ===================== RUTA DE SALUD =====================
@@ -427,7 +466,7 @@ app.post("/auth/login", async (req, res) => {
     }
 
     const q = await pool.query(
-      "SELECT id, email, password_hash, is_sponsor, is_banned FROM users WHERE email = $1",
+      "SELECT id, email, password_hash, is_sponsor, is_banned, community_banned FROM users WHERE email = $1",
       [normEmail]
     );
 
@@ -442,10 +481,12 @@ app.post("/auth/login", async (req, res) => {
     if (userRow.is_banned) {
       return res.status(403).json({
         error:
-          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+          "Tu cuenta ha sido bloqueada. Si crees que es un error, contacta con el soporte de Calmward.",
       });
     }
 
+    // OJO: si está baneado solo de Comunidad, sí permitimos login.
+    // El bloqueo se hace al usar las rutas de Comunidad.
     const ok = await bcrypt.compare(plainPass, userRow.password_hash);
     if (!ok) {
       return res
@@ -501,7 +542,7 @@ app.post("/community/posts", async (req, res) => {
       await blockUserAndKillSessions(user.id);
       return res.status(403).json({
         error:
-          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+          "Tu cuenta ha sido bloqueada para la zona Comunidad por incumplir las normas.",
       });
     }
 
@@ -686,7 +727,7 @@ app.post("/community/posts/:id/comments", async (req, res) => {
       await blockUserAndKillSessions(user.id);
       return res.status(403).json({
         error:
-          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+          "Tu cuenta ha sido bloqueada para la zona Comunidad por incumplir las normas.",
       });
     }
 
@@ -825,12 +866,81 @@ app.post("/ai/talk", async (req, res) => {
   }
 });
 
+/* ================= ADMIN PANEL ================= */
+
+function isAdminUser(user) {
+  return user?.email === "calmward.contact@gmail.com";
+}
+
+// Obtener todos los usuarios
+app.get("/admin/users", async (req, res) => {
+  const user = await getUserFromRequestOrThrow(req, res);
+  if (!user || !isAdminUser(user)) return;
+
+  const q = await pool.query(
+    "SELECT id, email, is_banned, community_banned, is_admin, is_sponsor, created_at FROM users ORDER BY id DESC"
+  );
+  res.json({ users: q.rows });
+});
+
+// Obtener posts de comunidad
+app.get("/admin/posts", async (req, res) => {
+  const user = await getUserFromRequestOrThrow(req, res);
+  if (!user || !isAdminUser(user)) return;
+
+  const q = await pool.query(
+    `SELECT p.id, p.body, p.created_at, p.flagged_toxic, p.user_id, u.email
+     FROM community_posts p
+     LEFT JOIN users u ON u.id = p.user_id
+     ORDER BY p.created_at DESC`
+  );
+  res.json({ posts: q.rows });
+});
+
+// Banear usuario manualmente
+app.post("/admin/ban/:id", async (req, res) => {
+  const user = await getUserFromRequestOrThrow(req, res);
+  if (!user || !isAdminUser(user)) return;
+
+  const id = req.params.id;
+  await pool.query(
+    "UPDATE users SET community_banned = TRUE WHERE id = $1",
+    [id]
+  );
+  res.json({ ok: true });
+});
+
+// Desbanear usuario
+app.post("/admin/unban/:id", async (req, res) => {
+  const user = await getUserFromRequestOrThrow(req, res);
+  if (!user || !isAdminUser(user)) return;
+
+  const id = req.params.id;
+  await pool.query(
+    "UPDATE users SET community_banned = FALSE WHERE id = $1",
+    [id]
+  );
+  res.json({ ok: true });
+});
+
+// Borrar post
+app.delete("/admin/posts/:id", async (req, res) => {
+  const user = await getUserFromRequestOrThrow(req, res);
+  if (!user || !isAdminUser(user)) return;
+
+  const id = req.params.id;
+  await pool.query("DELETE FROM community_posts WHERE id = $1", [id]);
+  res.json({ ok: true });
+});
+
 // ===================== ARRANQUE SERVIDOR =====================
 
 app.listen(PORT, () => {
   console.log(`Calmward API escuchando en puerto ${PORT}`);
   console.log(`? GROQ_MODEL = ${GROQ_MODEL}`);
   console.log(
-    `? DB: ${DATABASE_URL ? "conectada (DATABASE_URL presente)" : "NO CONFIGURADA"}`
+    `? DB: ${
+      DATABASE_URL ? "conectada (DATABASE_URL presente)" : "NO CONFIGURADA"
+    }`
   );
 });

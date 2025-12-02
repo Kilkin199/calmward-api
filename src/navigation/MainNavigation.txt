@@ -38,13 +38,15 @@ const { width } = Dimensions.get("window");
 type AuthContextType = {
   isLogged: boolean;
   userEmail: string | null;
-  isSponsor: boolean;
-  sessionTimeoutMinutes: number;
   authToken: string | null;
+  isSponsor: boolean;
+  isAdmin: boolean;
+  sessionTimeoutMinutes: number;
   login: (
     email: string,
     token: string,
-    isSponsorFromApi?: boolean
+    isSponsorFromApi?: boolean,
+    isAdminFromApi?: boolean
   ) => Promise<void>;
   logout: () => Promise<void>;
   setSponsor: (value: boolean) => Promise<void>;
@@ -54,9 +56,10 @@ type AuthContextType = {
 const AuthContext = React.createContext<AuthContextType>({
   isLogged: false,
   userEmail: null,
-  isSponsor: false,
-  sessionTimeoutMinutes: 30,
   authToken: null,
+  isSponsor: false,
+  isAdmin: false,
+  sessionTimeoutMinutes: 30,
   login: async () => {},
   logout: async () => {},
   setSponsor: async () => {},
@@ -130,19 +133,31 @@ function AppFooter() {
   );
 }
 
-// ---------- PANTALLA DE AUTENTICACIÓN (BIENVENIDA + LOGIN/REGISTRO) ----------
+// ---------- PANTALLA DE AUTENTICACIÓN (LOGIN/REGISTRO) ----------
 
 function AuthScreen({ navigation }: any) {
   const { login } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [gender, setGender] = useState<"hombre" | "mujer" | "otro" | "nd" | "">(
-    ""
-  );
+
+  // nuevos campos para registro
+  const [name, setName] = useState("");
+  const [gender, setGender] = useState<"hombre" | "mujer" | "otro" | "">("");
+  const [country, setCountry] = useState("");
+
+  // mostrar / ocultar contraseña
   const [showPassword, setShowPassword] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // validación local para no ir a la API cuando la contraseña es claramente inválida
+  function isStrongPasswordLocal(pwd: string) {
+    if (!pwd || pwd.length < 10) return false;
+    if (!/[A-Z]/.test(pwd)) return false; // al menos una mayúscula
+    return true;
+  }
 
   async function handleSubmit() {
     setError(null);
@@ -152,9 +167,25 @@ function AuthScreen({ navigation }: any) {
       return;
     }
 
-    if (mode === "register" && !gender) {
-      setError("Selecciona tu sexo / género.");
-      return;
+    if (mode === "register") {
+      if (!name.trim()) {
+        setError("Añade tu nombre para crear la cuenta.");
+        return;
+      }
+      if (!gender) {
+        setError("Selecciona si eres hombre, mujer u otro.");
+        return;
+      }
+      if (!country.trim()) {
+        setError("Añade tu país.");
+        return;
+      }
+      if (!isStrongPasswordLocal(password)) {
+        setError(
+          "La contraseña debe tener al menos 10 caracteres y al menos 1 letra mayúscula."
+        );
+        return;
+      }
     }
 
     if (!API_BASE_URL) {
@@ -170,10 +201,15 @@ function AuthScreen({ navigation }: any) {
       const endpoint =
         mode === "login" ? "/auth/login" : "/auth/register-and-login";
 
-      const body: any = { email, password };
+      const body: any = {
+        email,
+        password,
+      };
 
       if (mode === "register") {
+        body.name = name;
         body.gender = gender;
+        body.country = country;
       }
 
       const res = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -207,6 +243,9 @@ function AuthScreen({ navigation }: any) {
       const isSponsorFromApi: boolean | undefined =
         typeof data.isSponsor === "boolean" ? data.isSponsor : undefined;
 
+      const isAdminFromApi: boolean | undefined =
+        typeof data.isAdmin === "boolean" ? data.isAdmin : undefined;
+
       if (!token) {
         setError(
           "La API no ha devuelto un token de sesión válido. Habla con el desarrollador del backend."
@@ -214,24 +253,7 @@ function AuthScreen({ navigation }: any) {
         return;
       }
 
-      await login(email, token, isSponsorFromApi);
-
-      if (mode === "register" && gender) {
-        try {
-          await AsyncStorage.setItem("calmward_gender", gender);
-        } catch {
-          // no pasa nada si falla
-        }
-      }
-
-      setError(null);
-      setPassword("");
-
-      const parentNav = navigation.getParent?.() || navigation;
-      parentNav.reset({
-        index: 0,
-        routes: [{ name: "Root" }],
-      });
+      await login(email, token, isSponsorFromApi, isAdminFromApi);
     } catch (e) {
       console.log("Error de red con Calmward API", e);
       setError(
@@ -251,15 +273,18 @@ function AuthScreen({ navigation }: any) {
         <View style={styles.authHeaderTop}>
           <Text style={styles.appMiniTitle}>Calmward</Text>
           <Text style={styles.appMiniTagline}>
-            Respira, escribe, pide ayuda
+            Tu espacio para respirar y escribir
           </Text>
         </View>
 
         <View style={styles.authCard}>
-          <Text style={styles.authWelcome}>Bienvenido a Calmward</Text>
+          <Text style={styles.authWelcome}>
+            {mode === "login" ? "Bienvenido de nuevo" : "Crea tu cuenta"}
+          </Text>
           <Text style={styles.authSubtitle}>
-            Un lugar discreto para registrar tu día, hablar cuando lo
-            necesites y tener a mano ayuda si algo se complica.
+            {mode === "login"
+              ? "Inicia sesión para continuar donde lo dejaste."
+              : "Solo necesitas unos datos básicos para guardar tu progreso."}
           </Text>
 
           <View style={styles.authTabRow}>
@@ -310,48 +335,55 @@ function AuthScreen({ navigation }: any) {
             />
 
             <Text style={[styles.label, { marginTop: 12 }]}>Contraseña</Text>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <View style={styles.passwordRow}>
               <TextInput
                 style={[styles.input, { flex: 1 }]}
                 secureTextEntry={!showPassword}
                 value={password}
                 onChangeText={setPassword}
-                placeholder="••••••••"
+                placeholder="••••••••••"
                 placeholderTextColor="#9CA3AF"
               />
               <TouchableOpacity
-                style={{ marginLeft: 8 }}
-                onPress={() => setShowPassword((v) => !v)}
+                style={styles.showPasswordBtn}
+                onPress={() => setShowPassword((prev) => !prev)}
               >
-                <Text style={{ fontSize: 12, color: "#0EA5E9" }}>
-                  {showPassword ? "Ocultar" : "Mostrar"}
+                <Text style={styles.showPasswordText}>
+                  {showPassword ? "Ocultar" : "Ver"}
                 </Text>
               </TouchableOpacity>
             </View>
+            {mode === "register" && (
+              <Text style={styles.passwordHint}>
+                Mínimo 10 caracteres y al menos 1 letra mayúscula.
+              </Text>
+            )}
 
             {mode === "register" && (
               <>
+                <Text style={[styles.label, { marginTop: 12 }]}>Nombre</Text>
+                <TextInput
+                  style={styles.input}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Cómo quieres que Calmward te llame"
+                  placeholderTextColor="#9CA3AF"
+                />
+
                 <Text style={[styles.label, { marginTop: 12 }]}>
-                  ¿Con qué sexo / género te identificas?
+                  ¿Cómo te identificas?
                 </Text>
                 <View style={styles.genderRow}>
-                  {[
-                    { key: "hombre", label: "Hombre" },
-                    { key: "mujer", label: "Mujer" },
-                    { key: "otro", label: "Otro" },
-                    { key: "nd", label: "Prefiero no decirlo" },
-                  ].map((op) => {
-                    const active = gender === op.key;
+                  {(["hombre", "mujer", "otro"] as const).map((g) => {
+                    const active = gender === g;
                     return (
                       <TouchableOpacity
-                        key={op.key}
-                        onPress={() =>
-                          setGender(op.key as "hombre" | "mujer" | "otro" | "nd")
-                        }
+                        key={g}
                         style={[
                           styles.genderChip,
                           active && styles.genderChipActive,
                         ]}
+                        onPress={() => setGender(g)}
                       >
                         <Text
                           style={[
@@ -359,16 +391,25 @@ function AuthScreen({ navigation }: any) {
                             active && styles.genderChipTextActive,
                           ]}
                         >
-                          {op.label}
+                          {g === "hombre"
+                            ? "Hombre"
+                            : g === "mujer"
+                            ? "Mujer"
+                            : "Otro"}
                         </Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
-                <Text style={styles.genderHint}>
-                  Este dato solo se usa dentro de Calmward; no se muestra a
-                  otras personas.
-                </Text>
+
+                <Text style={[styles.label, { marginTop: 12 }]}>País</Text>
+                <TextInput
+                  style={styles.input}
+                  value={country}
+                  onChangeText={setCountry}
+                  placeholder="Ej: España, México, Argentina..."
+                  placeholderTextColor="#9CA3AF"
+                />
               </>
             )}
 
@@ -402,14 +443,26 @@ function AuthScreen({ navigation }: any) {
   );
 }
 
+
 // ---------- TAB: INICIO ----------
 
+// ---------- TAB: INICIO (MEJORADA) ----------
+
+type DayEntry = {
+  id: number;
+  date: string;
+  rating: number;
+  note: string;
+};
+
 function HomeScreen({ navigation }: any) {
-  const { isLogged, authToken, isSponsor } = useAuth();
+  const { isLogged, isSponsor } = useAuth();
   const [sponsorIndex, setSponsorIndex] = useState(0);
   const scrollRef = useRef<ScrollView | null>(null);
   const CARD_WIDTH = width * 0.8;
   const CARD_SPACING = 12;
+
+  const [recentDays, setRecentDays] = useState<DayEntry[]>([]);
 
   async function touchActivity() {
     try {
@@ -422,6 +475,29 @@ function HomeScreen({ navigation }: any) {
     }
   }
 
+  // Cargar últimos días guardados (Tu día)
+  useEffect(() => {
+    async function loadDays() {
+      try {
+        const raw = await AsyncStorage.getItem("calmward_days");
+        if (!raw) {
+          setRecentDays([]);
+          return;
+        }
+        const list: DayEntry[] = JSON.parse(raw);
+        const sorted = [...list].sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+        setRecentDays(sorted.slice(0, 3));
+      } catch {
+        setRecentDays([]);
+      }
+    }
+
+    loadDays();
+  }, []);
+
+  // Carrusel de patrocinadores
   useEffect(() => {
     if (SPONSORS.length <= 1) return;
     const intervalId = setInterval(() => {
@@ -478,15 +554,148 @@ function HomeScreen({ navigation }: any) {
     parentNav.navigate("SponsorPayment");
   }
 
+  function goToTab(tabName: "Inicio" | "Tu día" | "Hablar" | "Perfil" | "Ayuda urgente") {
+    const parent = navigation.getParent?.();
+    if (parent) {
+      parent.navigate(tabName as never);
+    } else {
+      navigation.navigate(tabName as never);
+    }
+  }
+
+  function formatDate(dateStr: string) {
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return "Fecha desconocida";
+    return d.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
 
       <ScrollView contentContainerStyle={styles.content}>
+        {/* HERO ARRIBA: resumen y atajos */}
+        <View style={styles.homeHero}>
+          <Text style={styles.homeHeroTitle}>Hola</Text>
+          <Text style={styles.homeHeroSubtitle}>
+            Este es tu espacio para respirar, escribir y ordenar lo que llevas encima.
+          </Text>
+
+          <View style={styles.homeQuickRow}>
+            <TouchableOpacity
+              style={[styles.homeQuickCard, styles.homeQuickCardPrimary]}
+              onPress={() => goToTab("Hablar")}
+            >
+              <MaterialCommunityIcons
+                name="message-text-outline"
+                size={24}
+                color="#FFFFFF"
+              />
+              <Text style={styles.homeQuickTitle}>Hablar</Text>
+              <Text style={styles.homeQuickText}>
+                Desahógate sin filtros. La IA te escucha con cuidado.
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, gap: 8 }}>
+              <TouchableOpacity
+                style={styles.homeMiniCard}
+                onPress={() => goToTab("Tu día")}
+              >
+                <MaterialCommunityIcons
+                  name="white-balance-sunny"
+                  size={18}
+                  color="#0EA5E9"
+                />
+                <View style={{ marginLeft: 8, flex: 1 }}>
+                  <Text style={styles.homeMiniTitle}>Tu día</Text>
+                  <Text style={styles.homeMiniText}>
+                    Marca cómo estás hoy.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.homeMiniCard}
+                onPress={() => goToTab("Ayuda urgente")}
+              >
+                <MaterialCommunityIcons
+                  name="alert-circle-outline"
+                  size={18}
+                  color="#DC2626"
+                />
+                <View style={{ marginLeft: 8, flex: 1 }}>
+                  <Text style={styles.homeMiniTitle}>Ayuda urgente</Text>
+                  <Text style={styles.homeMiniText}>
+                    Qué hacer si todo se complica.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        {/* ÚLTIMOS DÍAS GUARDADOS */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Tus últimos días</Text>
+          {recentDays.length === 0 ? (
+            <Text style={styles.sectionBody}>
+              Aún no has guardado ningún día. Ve a la pestaña{" "}
+              <Text style={{ fontWeight: "600" }}>“Tu día”</Text> para empezar
+              a registrar cómo te sientes.
+            </Text>
+          ) : (
+            <>
+              <Text style={styles.sectionBody}>
+                Un vistazo rápido a lo último que has ido apuntando.
+              </Text>
+              <View style={{ marginTop: 8, gap: 8 }}>
+                {recentDays.map((d) => (
+                  <View key={d.id} style={styles.daySummaryRow}>
+                    <View style={styles.daySummaryBadge}>
+                      <Text style={styles.daySummaryRating}>{d.rating}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.daySummaryDate}>
+                        {formatDate(d.date)}
+                      </Text>
+                      {d.note ? (
+                        <Text
+                          style={styles.daySummaryNote}
+                          numberOfLines={2}
+                        >
+                          {d.note}
+                        </Text>
+                      ) : (
+                        <Text style={styles.daySummaryNoteEmpty}>
+                          Sin nota, solo marcaste el número.
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={styles.daySeeMoreBtn}
+                onPress={() => goToTab("Tu día")}
+              >
+                <Text style={styles.daySeeMoreText}>
+                  Ir a “Tu día” para ver más
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
         {/* BLOQUE DE PATROCINIOS ARRIBA */}
         <View style={[styles.sectionCard, styles.sponsorCard]}>
           <View style={styles.sponsorHeaderRow}>
-            <Text style={styles.sponsorBadge}>Patrocinado</Text>
+            <Text style={styles.sponsorBadge}>Patrocinan este espacio</Text>
             <Text style={styles.sponsorMiniText}>
               Ayudan a que Calmward siga siendo gratuita
             </Text>
@@ -537,53 +746,6 @@ function HomeScreen({ navigation }: any) {
               />
             ))}
           </View>
-        </View>
-
-        {/* BLOQUE: QUÉ ES CALMWARD */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Qué es Calmward</Text>
-          <Text style={styles.sectionBody}>
-            Calmward es una app pensada para acompañarte en días buenos,
-            regulares y malos. No sustituye a profesionales ni a servicios de
-            emergencia, pero sí quiere ser un lugar seguro donde:
-          </Text>
-          <Text style={styles.sectionBody}>
-            • Registrar cómo te sientes a lo largo del tiempo.{"\n"}
-            • Escribir lo que te cuesta decir en voz alta.{"\n"}
-            • Hablar con una IA que responde con cuidado, sin juzgarte.{"\n"}
-            • Tener a mano recordatorios de que pedir ayuda no es un fracaso.
-          </Text>
-          <Text style={styles.sectionBody}>
-            La idea es que, al abrir Calmward, no te sientas solo con lo que
-            estás llevando encima.
-          </Text>
-        </View>
-
-        {/* BLOQUE: PATROCINA CALMWARD / PAGO */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Patrocina Calmward</Text>
-          <Text style={styles.sectionBody}>
-            Los patrocinios permiten que la app pueda seguir siendo gratuita y
-            sin anuncios invasivos. A cambio, tu marca aparece en el bloque de
-            patrocinios de la pantalla de inicio.
-          </Text>
-          <Text style={styles.sectionBody}>
-            Si contratas un patrocinio, en tu cuenta verás un apartado de
-            estadísticas con datos básicos de visualizaciones e interacciones
-            (pensado para conectar con un backend más adelante).
-          </Text>
-
-          {isSponsor ? (
-            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
-              Tu cuenta ya está marcada como patrocinador activo. Puedes ver tus
-              estadísticas desde tu perfil.
-            </Text>
-          ) : (
-            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
-              Para patrocinar Calmward necesitas tener una cuenta y haber
-              iniciado sesión.
-            </Text>
-          )}
 
           <TouchableOpacity
             style={[
@@ -593,7 +755,9 @@ function HomeScreen({ navigation }: any) {
             onPress={handleSponsorPayment}
           >
             <Text style={styles.sponsorPayButtonText}>
-              {isLogged ? "Ir a página de pago" : "Inicia sesión para patrocinar"}
+              {isLogged
+                ? "Ir a página de pago de patrocinio"
+                : "Inicia sesión para patrocinar Calmward"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -604,508 +768,6 @@ function HomeScreen({ navigation }: any) {
   );
 }
 
-// ---------- TAB: COMUNIDAD (POSTS ANÓNIMOS) ----------
-
-type CommunityPost = {
-  id: string | number;
-  text: string;
-  likes: number;
-  commentsCount?: number;
-  createdAt?: string;
-};
-
-function CommunityScreen({ navigation }: any) {
-  const { isLogged, authToken } = useAuth();
-
-  const [posts, setPosts] = useState<CommunityPost[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [newText, setNewText] = useState("");
-  const [commentForId, setCommentForId] = useState<string | number | null>(
-    null
-  );
-  const [commentText, setCommentText] = useState("");
-
-  async function touchActivity() {
-    try {
-      await AsyncStorage.setItem(
-        "calmward_last_activity",
-        String(Date.now())
-      );
-    } catch {}
-  }
-
-  function normalizePost(raw: any): CommunityPost {
-    return {
-      id: raw?.id ?? raw?.post_id ?? String(Date.now()),
-      text: String(raw?.body || raw?.text || "").trim(),
-      likes:
-        typeof raw?.likeCount === "number"
-          ? raw.likeCount
-          : typeof raw?.likes === "number"
-          ? raw.likes
-          : 0,
-      commentsCount:
-        typeof raw?.commentCount === "number"
-          ? raw.commentCount
-          : typeof raw?.commentsCount === "number"
-          ? raw.commentsCount
-          : typeof raw?.comments_count === "number"
-          ? raw.comments_count
-          : undefined,
-      createdAt: raw?.createdAt || raw?.created_at || undefined,
-    };
-  }
-
-  async function loadPosts(initial = false) {
-    if (!API_BASE_URL) return;
-    if (initial) setLoading(true);
-    else setRefreshing(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/community/posts`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const list = Array.isArray(data?.posts) ? data.posts : data;
-      const mapped = Array.isArray(list) ? list.map(normalizePost) : [];
-      setPosts(mapped);
-    } catch (e) {
-      console.log("Error cargando posts comunidad", e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
-  useEffect(() => {
-    loadPosts(true);
-  }, []);
-
-  function ensureLoggedForCommunity(actionLabel: string) {
-    if (isLogged && authToken) return true;
-    Alert.alert(
-      "Inicia sesión",
-      `Necesitas tener sesión iniciada para ${actionLabel} en la Comunidad.`
-    );
-    const parentNav = navigation.getParent?.() || navigation;
-    parentNav.navigate("Auth");
-    return false;
-  }
-
-  async function handlePublish() {
-    const text = newText.trim();
-    if (!text) return;
-    if (!API_BASE_URL) {
-      Alert.alert(
-        "Servidor no disponible",
-        "La API de Calmward no está configurada (API_BASE_URL)."
-      );
-      return;
-    }
-
-    if (!ensureLoggedForCommunity("publicar")) return;
-
-    await touchActivity();
-    setSending(true);
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/community/posts`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!res.ok) {
-        let msg =
-          "No se ha podido publicar el mensaje. Puede que el texto no cumpla las normas de la comunidad.";
-        try {
-          const data = await res.json();
-          if (data && typeof data.error === "string" && data.error.trim()) {
-            msg = data.error.trim();
-          }
-        } catch {}
-        Alert.alert("No se ha publicado", msg);
-        return;
-      }
-
-      const data = await res.json();
-      const created = normalizePost(data?.post ?? data);
-      setPosts((prev) => [created, ...prev]);
-      setNewText("");
-    } catch (e) {
-      console.log("Error publicando post comunidad", e);
-      Alert.alert(
-        "Error de conexión",
-        "No se ha podido conectar con el servidor de Calmward."
-      );
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function handleLike(postId: string | number) {
-    if (!API_BASE_URL) return;
-    if (!ensureLoggedForCommunity("dar me gusta")) return;
-
-    await touchActivity();
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/community/posts/${postId}/like`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-        }
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      const liked = !!data.liked;
-      const likeCount =
-        typeof data.likeCount === "number"
-          ? data.likeCount
-          : typeof data.likes === "number"
-          ? data.likes
-          : 0;
-
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.id === postId ? { ...p, likes: likeCount } : p
-        )
-      );
-    } catch (e) {
-      console.log("Error al dar like en comunidad", e);
-    }
-  }
-
-  function openCommentBox(postId: string | number) {
-    if (!ensureLoggedForCommunity("comentar")) return;
-    setCommentForId(postId);
-    setCommentText("");
-  }
-
-  async function handleSendComment() {
-    const text = commentText.trim();
-    if (!commentForId || !text || !API_BASE_URL) return;
-
-    if (!ensureLoggedForCommunity("comentar")) return;
-
-    await touchActivity();
-
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/community/posts/${commentForId}/comments`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({ text }),
-        }
-      );
-
-      if (!res.ok) {
-        let msg =
-          "No se ha podido publicar el comentario. Revisa que respete las normas de la comunidad.";
-        try {
-          const data = await res.json();
-          if (data && typeof data.error === "string" && data.error.trim()) {
-            msg = data.error.trim();
-          }
-        } catch {}
-        Alert.alert("Comentario bloqueado", msg);
-        return;
-      }
-
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.id === commentForId
-            ? {
-                ...p,
-                commentsCount:
-                  typeof p.commentsCount === "number"
-                    ? p.commentsCount + 1
-                    : 1,
-              }
-            : p
-        )
-      );
-      setCommentText("");
-      setCommentForId(null);
-    } catch (e) {
-      console.log("Error publicando comentario comunidad", e);
-      Alert.alert(
-        "Error de conexión",
-        "No se ha podido publicar el comentario ahora mismo."
-      );
-    }
-  }
-
-  function formatDate(iso?: string) {
-    if (!iso) return "";
-    try {
-      const d = new Date(iso);
-      return d.toLocaleString();
-    } catch {
-      return "";
-    }
-  }
-
-  return (
-    <SafeAreaView style={styles.screen}>
-      <AppHeader navigation={navigation} />
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Comunidad</Text>
-          <Text style={styles.sectionBody}>
-            Aquí puedes escribir lo que quieras compartir de forma anónima. No
-            uses nombres reales ni datos que identifiquen a nadie. Los mensajes
-            que ataquen, manipulen o falten al respeto a otras personas se
-            bloquean automáticamente.
-          </Text>
-
-          {!isLogged && (
-            <Text
-              style={{
-                marginTop: 8,
-                fontSize: 12,
-                color: "#DC2626",
-              }}
-            >
-              Para publicar, comentar o dar “me gusta” necesitas iniciar sesión.
-            </Text>
-          )}
-
-          <Text style={[styles.label, { marginTop: 12 }]}>
-            ¿Qué te gustaría compartir hoy?
-          </Text>
-          <TextInput
-            style={styles.dayInput}
-            placeholder="Escribe algo que quieras sacar de dentro, desde el respeto hacia ti y hacia los demás..."
-            placeholderTextColor="#9CA3AF"
-            multiline
-            value={newText}
-            onChangeText={setNewText}
-          />
-
-          <TouchableOpacity
-            style={[
-              styles.daySaveBtn,
-              (!newText.trim() || sending) && { opacity: 0.6 },
-            ]}
-            onPress={handlePublish}
-            disabled={!newText.trim() || sending}
-          >
-            <Text style={styles.daySaveText}>
-              {sending ? "Publicando..." : "Publicar anónimo"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Lo último que se ha compartido</Text>
-          {loading && (
-            <View style={{ paddingVertical: 12 }}>
-              <ActivityIndicator size="small" color="#0EA5E9" />
-            </View>
-          )}
-
-          {!loading && posts.length === 0 && (
-            <Text style={styles.sectionBody}>
-              Aún no hay publicaciones. Cuando alguien comparta algo (o tú
-              mismo), aparecerá aquí.
-            </Text>
-          )}
-
-          {posts.map((p) => (
-            <View
-              key={String(p.id)}
-              style={[
-                styles.sectionCard,
-                {
-                  marginTop: 12,
-                  marginBottom: 0,
-                  backgroundColor: "#F9FAFB",
-                },
-              ]}
-            >
-              <Text style={styles.sectionBody}>{p.text}</Text>
-              {!!p.createdAt && (
-                <Text
-                  style={{
-                    marginTop: 6,
-                    fontSize: 11,
-                    color: "#9CA3AF",
-                  }}
-                >
-                  {formatDate(p.createdAt)}
-                </Text>
-              )}
-
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginTop: 8,
-                  justifyContent: "space-between",
-                }}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <TouchableOpacity
-                    onPress={() => handleLike(p.id)}
-                    style={{
-                      paddingVertical: 4,
-                      paddingHorizontal: 8,
-                      borderRadius: 999,
-                      backgroundColor: "#0EA5E9",
-                      marginRight: 6,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "#FFFFFF",
-                        fontSize: 12,
-                        fontWeight: "600",
-                      }}
-                    >
-                      Me gusta
-                    </Text>
-                  </TouchableOpacity>
-                  <Text
-                    style={{ fontSize: 12, color: "#4B5563", minWidth: 40 }}
-                  >
-                    {p.likes || 0} ❤
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  onPress={() => openCommentBox(p.id)}
-                  style={{
-                    paddingVertical: 4,
-                    paddingHorizontal: 8,
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    borderColor: "#D1D5DB",
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: "#4B5563",
-                      fontWeight: "500",
-                    }}
-                  >
-                    Comentar
-                    {typeof p.commentsCount === "number" && p.commentsCount > 0
-                      ? ` (${p.commentsCount})`
-                      : ""}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {commentForId === p.id && (
-                <View style={{ marginTop: 10 }}>
-                  <TextInput
-                    style={styles.dayInput}
-                    placeholder="Escribe tu comentario con respeto..."
-                    placeholderTextColor="#9CA3AF"
-                    multiline
-                    value={commentText}
-                    onChangeText={setCommentText}
-                  />
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "flex-end",
-                      marginTop: 6,
-                      gap: 8,
-                    } as any}
-                  >
-                    <TouchableOpacity
-                      onPress={() => {
-                        setCommentForId(null);
-                        setCommentText("");
-                      }}
-                      style={{
-                        paddingVertical: 8,
-                        paddingHorizontal: 12,
-                        borderRadius: 999,
-                        borderWidth: 1,
-                        borderColor: "#D1D5DB",
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, color: "#4B5563" }}>
-                        Cancelar
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={handleSendComment}
-                      disabled={!commentText.trim()}
-                      style={[
-                        {
-                          paddingVertical: 8,
-                          paddingHorizontal: 12,
-                          borderRadius: 999,
-                          backgroundColor: "#22C55E",
-                        },
-                        !commentText.trim() && { opacity: 0.6 },
-                      ]}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          color: "#FFFFFF",
-                          fontWeight: "600",
-                        }}
-                      >
-                        Enviar comentario
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </View>
-          ))}
-
-          {!loading && posts.length > 0 && (
-            <TouchableOpacity
-              style={{
-                marginTop: 16,
-                alignSelf: "flex-start",
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: "#D1D5DB",
-              }}
-              onPress={() => loadPosts(false)}
-              disabled={refreshing}
-            >
-              <Text
-                style={{
-                  fontSize: 12,
-                  color: "#4B5563",
-                  fontWeight: "500",
-                }}
-              >
-                {refreshing ? "Actualizando..." : "Actualizar lista"}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <AppFooter />
-      </ScrollView>
-    </SafeAreaView>
-  );
-}
 
 // ---------- TAB: HABLAR (CHAT) ----------
 
@@ -1475,45 +1137,13 @@ function DayScreen({ navigation }: any) {
   );
 }
 
-// ---------- PERFIL + PANEL ADMIN ----------
+// ---------- PERFIL + BOTÓN ADMIN ----------
 
 function ProfileScreen({ navigation }: any) {
-  const { userEmail, logout, isSponsor } = useAuth();
-  const [userGender, setUserGender] = useState<string | null>(null);
-
-  const isAdmin = userEmail === "calmward.contact@gmail.com";
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const g = await AsyncStorage.getItem("calmward_gender");
-        if (active) setUserGender(g);
-      } catch {
-        // ignoramos
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  function genderLabel() {
-    if (!userGender) return "No indicado";
-    if (userGender === "hombre") return "Hombre";
-    if (userGender === "mujer") return "Mujer";
-    if (userGender === "otro") return "Otro";
-    if (userGender === "nd") return "Prefiero no decirlo";
-    return userGender;
-  }
+  const { userEmail, logout, isSponsor, isAdmin } = useAuth();
 
   async function handleLogout() {
     await logout();
-    const parentNav = navigation.getParent?.() || navigation;
-    parentNav.reset({
-      index: 0,
-      routes: [{ name: "Root" }],
-    });
   }
 
   function goToSponsorStats() {
@@ -1522,24 +1152,9 @@ function ProfileScreen({ navigation }: any) {
     parentNav.navigate("SponsorStats");
   }
 
-  function goToSettings() {
-    const parentNav = navigation.getParent?.() || navigation;
-    parentNav.navigate("Settings");
-  }
-
-  function goToContact() {
-    const parentNav = navigation.getParent?.() || navigation;
-    parentNav.navigate("Contacto");
-  }
-
-  function goToLegal() {
-    const parentNav = navigation.getParent?.() || navigation;
-    parentNav.navigate("Legal");
-  }
-
   function goToAdminPanel() {
     const parentNav = navigation.getParent?.() || navigation;
-    parentNav.navigate("AdminPanel");
+    parentNav.navigate("AdminUsers");
   }
 
   return (
@@ -1548,83 +1163,17 @@ function ProfileScreen({ navigation }: any) {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Perfil</Text>
-
           {userEmail ? (
-            <>
-              <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
-              <Text style={styles.sectionBody}>
-                Rol:{" "}
-                {isAdmin
-                  ? "Administrador de Calmward"
-                  : "Usuario estándar de Calmward"}
-              </Text>
-              <Text style={styles.sectionBody}>
-                Sexo / género: {genderLabel()}
-              </Text>
-              <Text style={styles.sectionBody}>
-                Patrocinio: {isSponsor ? "Cuenta patrocinadora" : "Cuenta gratuita"}
-              </Text>
-              <Text style={styles.sectionBody}>
-                Versión de la app: 1.0.0 (preview)
-              </Text>
-            </>
+            <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
           ) : (
             <Text style={styles.sectionBody}>
               No hay sesión activa en este momento.
             </Text>
           )}
 
-          {userEmail && (
-            <View style={styles.profileButtonsRow}>
-              <TouchableOpacity
-                style={styles.profileButton}
-                onPress={goToSettings}
-              >
-                <Text style={styles.profileButtonText}>
-                  Configuración de la cuenta
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.profileButtonSecondary}
-                onPress={goToContact}
-              >
-                <Text style={styles.profileButtonSecondaryText}>
-                  Contacto y soporte
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.profileButtonSecondary}
-                onPress={goToLegal}
-              >
-                <Text style={styles.profileButtonSecondaryText}>
-                  Política de privacidad
-                </Text>
-              </TouchableOpacity>
-
-              {isAdmin && (
-                <TouchableOpacity
-                  style={[
-                    styles.profileButton,
-                    { backgroundColor: "#0F766E" },
-                  ]}
-                  onPress={goToAdminPanel}
-                >
-                  <Text style={styles.profileButtonText}>
-                    Abrir panel de administración
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={[styles.profileButton, { backgroundColor: "#DC2626" }]}
-                onPress={handleLogout}
-              >
-                <Text style={styles.profileButtonText}>Cerrar sesión</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+            <Text style={styles.logoutText}>Cerrar sesión</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.sectionCard}>
@@ -1635,7 +1184,7 @@ function ProfileScreen({ navigation }: any) {
                 Tu cuenta está marcada como patrocinador activo de Calmward.
               </Text>
               <Text style={styles.sectionBody}>
-                Aquí podrás consultar datos básicos de visualizaciones e clics
+                Aquí podrás consultar datos básicos de visualizaciones y clics
                 de tu patrocinio cuando haya un backend conectado.
               </Text>
               <TouchableOpacity
@@ -1654,6 +1203,23 @@ function ProfileScreen({ navigation }: any) {
             </Text>
           )}
         </View>
+
+        {isAdmin && (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Panel de administración</Text>
+            <Text style={styles.sectionBody}>
+              Desde aquí podrás ver las cuentas creadas y gestionarlas.
+            </Text>
+            <TouchableOpacity
+              style={styles.adminPanelButton}
+              onPress={goToAdminPanel}
+            >
+              <Text style={styles.adminPanelButtonText}>
+                Abrir panel de administración
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <AppFooter />
       </ScrollView>
@@ -1675,10 +1241,10 @@ function ContactScreen({ navigation }: any) {
 
   async function handleEmail() {
     await touchActivity();
-    Linking.openURL("mailto:soporte@calmward.app").catch(() => {
+    Linking.openURL("mailto:calmward.contact@gmail.com").catch(() => {
       Alert.alert(
         "No se pudo abrir el correo",
-        "Copia la dirección soporte@calmward.app y escribe desde tu gestor de correo."
+        "Copia la dirección calmward.contact@gmail.com y escribe desde tu gestor de correo."
       );
     });
   }
@@ -1693,9 +1259,9 @@ function ContactScreen({ navigation }: any) {
             Si quieres escribirnos por dudas, propuestas de colaboración o
             patrocinios, puedes hacerlo aquí:
           </Text>
-          <Text style={[styles.sectionBody, { marginTop: 8 }]} >
+          <Text style={[styles.sectionBody, { marginTop: 8 }]}>
             Correo de contacto:{" "}
-            <Text style={{ fontWeight: "600" }}>soporte@calmward.app</Text>
+            <Text style={{ fontWeight: "600" }}>calmward.contact@gmail.com</Text>
           </Text>
 
           <TouchableOpacity style={styles.contactBtn} onPress={handleEmail}>
@@ -2131,123 +1697,153 @@ function UrgentHelpScreen({ navigation }: any) {
   );
 }
 
-// ---------- PANEL ADMIN (APP) ----------
+// ---------- PANTALLA ADMIN: LISTA DE USUARIOS ----------
 
 type AdminUser = {
   id: number;
   email: string;
-  is_banned?: boolean;
-  community_banned?: boolean;
-  is_admin?: boolean;
-  is_sponsor?: boolean;
-  created_at?: string;
+  name: string | null;
+  gender: string | null;
+  country: string | null;
+  is_sponsor: boolean;
+  is_admin: boolean;
+  created_at: string;
 };
 
-type AdminPost = {
-  id: number;
-  body: string;
-  created_at?: string;
-  flagged_toxic?: boolean;
-  user_id?: number;
-  email?: string;
-};
-
-function AdminPanelScreen({ navigation }: any) {
-  const { authToken, userEmail } = useAuth();
+function AdminUsersScreen({ navigation }: any) {
+  const { isAdmin, authToken, userEmail } = useAuth();
+  const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [posts, setPosts] = useState<AdminPost[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const isAdmin = userEmail === "calmward.contact@gmail.com";
-
-  useEffect(() => {
-    if (!isAdmin || !authToken) {
-      setLoading(false);
-      return;
-    }
-    loadAll();
-  }, [isAdmin, authToken]);
-
-  async function loadAll() {
+  async function loadUsers() {
     if (!API_BASE_URL || !authToken) return;
-    try {
-      setLoading(true);
-      const [uRes, pRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/admin/users`, {
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-        }),
-        fetch(`${API_BASE_URL}/admin/posts`, {
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-        }),
-      ]);
+    setLoading(true);
+    setError(null);
 
-      if (uRes.ok) {
-        const data = await uRes.json();
-        setUsers(Array.isArray(data?.users) ? data.users : []);
-      }
-      if (pRes.ok) {
-        const data = await pRes.json();
-        setPosts(Array.isArray(data?.posts) ? data.posts : []);
-      }
-    } catch (e) {
-      console.log("Error cargando datos admin", e);
-      Alert.alert(
-        "Error",
-        "No se han podido cargar los datos del panel de administración."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
-  async function handleToggleBan(u: AdminUser) {
-    if (!API_BASE_URL || !authToken) return;
-    const current = !!u.community_banned;
-    const endpoint = current ? "unban" : "ban";
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/${endpoint}/${u.id}`, {
-        method: "POST",
+      const res = await fetch(`${API_BASE_URL}/admin/users`, {
         headers: {
           Authorization: `Bearer ${authToken}`,
         },
       });
+
       if (!res.ok) {
-        Alert.alert(
-          "Error",
-          "No se ha podido actualizar el estado de la cuenta."
-        );
+        let msg = "No se ha podido cargar la lista de usuarios.";
+        try {
+          const data = await res.json();
+          if (data && typeof data.error === "string") {
+            msg = data.error;
+          }
+        } catch {}
+        setError(msg);
         return;
       }
-      setUsers((prev) =>
-        prev.map((usr) =>
-          usr.id === u.id ? { ...usr, community_banned: !current } : usr
-        )
-      );
+
+      const data = await res.json();
+      if (Array.isArray(data.users)) {
+        setUsers(data.users);
+      } else {
+        setError("Formato inesperado de respuesta del servidor.");
+      }
     } catch (e) {
-      console.log("Error al cambiar ban comunidad", e);
+      console.log("Error al cargar usuarios admin:", e);
+      setError("Error de red al cargar usuarios.");
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function handleDeletePost(p: AdminPost) {
+  useEffect(() => {
+    if (isAdmin && authToken) {
+      loadUsers();
+    }
+  }, [isAdmin, authToken]);
+
+  async function toggleSponsor(u: AdminUser) {
     if (!API_BASE_URL || !authToken) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ isSponsor: !u.is_sponsor }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        Alert.alert(
+          "Error",
+          data && data.error
+            ? String(data.error)
+            : "No se ha podido actualizar el usuario."
+        );
+        return;
+      }
+      const data = await res.json();
+      const updated: AdminUser = data.user;
+      setUsers((prev) =>
+        prev.map((x) => (x.id === updated.id ? updated : x))
+      );
+    } catch (e) {
+      Alert.alert("Error", "No se ha podido actualizar el usuario.");
+    }
+  }
+
+  async function toggleAdmin(u: AdminUser) {
+    if (!API_BASE_URL || !authToken) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ isAdmin: !u.is_admin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        Alert.alert(
+          "Error",
+          data && data.error
+            ? String(data.error)
+            : "No se ha podido actualizar el usuario."
+        );
+        return;
+      }
+      const updated: AdminUser = data.user;
+      setUsers((prev) =>
+        prev.map((x) => (x.id === updated.id ? updated : x))
+      );
+    } catch (e) {
+      Alert.alert("Error", "No se ha podido actualizar el usuario.");
+    }
+  }
+
+  async function deleteUser(u: AdminUser) {
+    if (!API_BASE_URL || !authToken) return;
+
+    if (u.email === userEmail) {
+      Alert.alert(
+        "No permitido",
+        "No puedes borrarte a ti mismo desde aquí."
+      );
+      return;
+    }
+
     Alert.alert(
-      "Eliminar post",
-      "¿Seguro que quieres borrar este post de la comunidad?",
+      "Borrar usuario",
+      `¿Seguro que quieres borrar la cuenta de ${u.email}? Esta acción no se puede deshacer.`,
       [
         { text: "Cancelar", style: "cancel" },
         {
-          text: "Eliminar",
+          text: "Borrar",
           style: "destructive",
           onPress: async () => {
             try {
               const res = await fetch(
-                `${API_BASE_URL}/admin/posts/${p.id}`,
+                `${API_BASE_URL}/admin/users/${u.id}`,
                 {
                   method: "DELETE",
                   headers: {
@@ -2255,26 +1851,27 @@ function AdminPanelScreen({ navigation }: any) {
                   },
                 }
               );
+              const data = await res.json().catch(() => ({}));
               if (!res.ok) {
                 Alert.alert(
                   "Error",
-                  "No se ha podido borrar el post."
+                  data && data.error
+                    ? String(data.error)
+                    : "No se ha podido borrar el usuario."
                 );
                 return;
               }
-              setPosts((prev) => prev.filter((x) => x.id !== p.id));
+              setUsers((prev) => prev.filter((x) => x.id !== u.id));
             } catch (e) {
-              console.log("Error borrando post en admin", e);
+              Alert.alert(
+                "Error",
+                "No se ha podido borrar el usuario por un error de red."
+              );
             }
           },
         },
       ]
     );
-  }
-
-  async function handleRefresh() {
-    setRefreshing(true);
-    await loadAll();
   }
 
   if (!isAdmin) {
@@ -2285,10 +1882,10 @@ function AdminPanelScreen({ navigation }: any) {
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Panel de administración</Text>
             <Text style={styles.sectionBody}>
-              Esta sección solo está disponible para la cuenta administradora de
-              Calmward.
+              Esta sección está disponible solo para usuarios administradores.
             </Text>
           </View>
+          <AppFooter />
         </ScrollView>
       </SafeAreaView>
     );
@@ -2299,187 +1896,88 @@ function AdminPanelScreen({ navigation }: any) {
       <AppHeader navigation={navigation} />
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Panel de administración</Text>
+          <Text style={styles.sectionTitle}>Usuarios registrados</Text>
           <Text style={styles.sectionBody}>
-            Gestiona usuarios y publicaciones de la Comunidad.
+            Desde aquí puedes ver las cuentas creadas, marcar patrocinadores y
+            añadir o quitar admins (protegiendo siempre al último admin).
           </Text>
 
           {loading && (
-            <View style={{ paddingVertical: 12 }}>
-              <ActivityIndicator size="small" color="#0EA5E9" />
-            </View>
+            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
+              Cargando usuarios...
+            </Text>
           )}
 
-          {!loading && (
-            <>
-              <View
-                style={{
-                  marginTop: 12,
-                  padding: 10,
-                  borderRadius: 12,
-                  backgroundColor: "#EFF6FF",
-                }}
-              >
-                <Text style={{ fontSize: 13, color: "#1D4ED8" }}>
-                  Usuarios totales: {users.length}
+          {error && (
+            <Text style={[styles.errorText, { marginTop: 8 }]}>{error}</Text>
+          )}
+
+          {!loading && users.length === 0 && !error && (
+            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
+              No hay usuarios registrados todavía.
+            </Text>
+          )}
+
+          {users.map((u) => (
+            <View key={u.id} style={styles.adminUserRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.adminUserEmail}>{u.email}</Text>
+                {u.name && (
+                  <Text style={styles.adminUserMeta}>Nombre: {u.name}</Text>
+                )}
+                {u.gender && (
+                  <Text style={styles.adminUserMeta}>
+                    Género: {u.gender}
+                  </Text>
+                )}
+                {u.country && (
+                  <Text style={styles.adminUserMeta}>
+                    País: {u.country}
+                  </Text>
+                )}
+                <Text style={styles.adminUserMeta}>
+                  Rol: {u.is_admin ? "Admin" : "Usuario normal"}
                 </Text>
-                <Text style={{ fontSize: 13, color: "#1D4ED8" }}>
-                  Posts en comunidad: {posts.length}
+                <Text style={styles.adminUserMeta}>
+                  Patrocinio: {u.is_sponsor ? "Sí" : "No"}
                 </Text>
               </View>
 
-              <TouchableOpacity
-                onPress={handleRefresh}
-                disabled={refreshing}
-                style={{
-                  marginTop: 10,
-                  alignSelf: "flex-start",
-                  paddingHorizontal: 10,
-                  paddingVertical: 8,
-                  borderRadius: 999,
-                  borderWidth: 1,
-                  borderColor: "#D1D5DB",
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 12,
-                    color: "#4B5563",
-                    fontWeight: "500",
-                  }}
+              <View style={styles.adminUserButtons}>
+                <TouchableOpacity
+                  style={styles.adminChip}
+                  onPress={() => toggleSponsor(u)}
                 >
-                  {refreshing ? "Actualizando..." : "Actualizar datos"}
-                </Text>
-              </TouchableOpacity>
-
-              <Text
-                style={[
-                  styles.sectionSubtitle,
-                  { marginTop: 16, fontWeight: "600" },
-                ]}
-              >
-                Usuarios
-              </Text>
-
-              {users.map((u) => (
-                <View
-                  key={u.id}
-                  style={{
-                    marginTop: 8,
-                    padding: 10,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: "#E5E7EB",
-                    backgroundColor: "#FFFFFF",
-                  }}
+                  <Text style={styles.adminChipText}>
+                    {u.is_sponsor ? "Quitar sponsor" : "Hacer sponsor"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.adminChip}
+                  onPress={() => toggleAdmin(u)}
                 >
-                  <Text style={{ fontSize: 13, fontWeight: "600" }}>
-                    {u.email}
+                  <Text style={styles.adminChipText}>
+                    {u.is_admin ? "Quitar admin" : "Hacer admin"}
                   </Text>
-                  <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                    ID: {u.id} · Patrocinador: {u.is_sponsor ? "Sí" : "No"}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                    Baneado comunidad: {u.community_banned ? "Sí" : "No"}
-                  </Text>
-
-                  <TouchableOpacity
-                    onPress={() => handleToggleBan(u)}
-                    style={{
-                      marginTop: 6,
-                      alignSelf: "flex-start",
-                      paddingHorizontal: 10,
-                      paddingVertical: 6,
-                      borderRadius: 999,
-                      backgroundColor: u.community_banned
-                        ? "#22C55E"
-                        : "#DC2626",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: "#FFFFFF",
-                        fontWeight: "600",
-                      }}
-                    >
-                      {u.community_banned
-                        ? "Desbloquear comunidad"
-                        : "Bloquear comunidad"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-
-              <Text
-                style={[
-                  styles.sectionSubtitle,
-                  { marginTop: 16, fontWeight: "600" },
-                ]}
-              >
-                Posts recientes
-              </Text>
-
-              {posts.map((p) => (
-                <View
-                  key={p.id}
-                  style={{
-                    marginTop: 8,
-                    padding: 10,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: "#E5E7EB",
-                    backgroundColor: "#F9FAFB",
-                  }}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.adminDeleteButton}
+                  onPress={() => deleteUser(u)}
                 >
-                  <Text style={{ fontSize: 13, color: "#111827" }}>
-                    {p.body}
-                  </Text>
-                  {p.email && (
-                    <Text
-                      style={{ fontSize: 11, color: "#6B7280", marginTop: 4 }}
-                    >
-                      Autor: {p.email || "Anónimo"}
-                    </Text>
-                  )}
-                  {p.created_at && (
-                    <Text
-                      style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}
-                    >
-                      {new Date(p.created_at).toLocaleString()}
-                    </Text>
-                  )}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "flex-end",
-                      marginTop: 6,
-                    }}
-                  >
-                    <TouchableOpacity
-                      onPress={() => handleDeletePost(p)}
-                      style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 999,
-                        backgroundColor: "#DC2626",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          color: "#FFFFFF",
-                          fontWeight: "600",
-                        }}
-                      >
-                        Borrar post
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </>
-          )}
+                  <Text style={styles.adminDeleteButtonText}>Borrar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+
+          <TouchableOpacity
+            style={styles.reloadUsersButton}
+            onPress={loadUsers}
+          >
+            <Text style={styles.reloadUsersButtonText}>
+              Recargar lista de usuarios
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <AppFooter />
@@ -2506,7 +2004,6 @@ function AppTabs() {
 
           if (route.name === "Inicio") icon = "home-outline";
           if (route.name === "Tu día") icon = "white-balance-sunny";
-          if (route.name === "Comunidad") icon = "account-group-outline";
           if (route.name === "Hablar") icon = "message-text-outline";
           if (route.name === "Perfil") icon = "account-circle-outline";
           if (route.name === "Ayuda urgente") icon = "alert-circle-outline";
@@ -2523,7 +2020,6 @@ function AppTabs() {
     >
       <Tab.Screen name="Inicio" component={HomeScreen} />
       <Tab.Screen name="Tu día" component={DayScreen} />
-      <Tab.Screen name="Comunidad" component={CommunityScreen} />
       <Tab.Screen name="Hablar" component={TalkScreen} />
       <Tab.Screen name="Perfil" component={ProfileScreen} />
       <Tab.Screen name="Ayuda urgente" component={UrgentHelpScreen} />
@@ -2537,9 +2033,10 @@ export default function MainNavigation() {
   const [ready, setReady] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [isSponsor, setIsSponsorState] = useState(false);
-  const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState(30);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const [isSponsor, setIsSponsorState] = useState(false);
+  const [isAdmin, setIsAdminState] = useState(false);
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState(30);
 
   useEffect(() => {
     async function load() {
@@ -2547,14 +2044,16 @@ export default function MainNavigation() {
         const token = await AsyncStorage.getItem("calmward_token");
         const email = await AsyncStorage.getItem("calmward_email");
         const sponsorFlag = await AsyncStorage.getItem("calmward_is_sponsor");
+        const adminFlag = await AsyncStorage.getItem("calmward_is_admin");
         const timeoutStr = await AsyncStorage.getItem(
           "calmward_session_timeout_minutes"
         );
 
         setIsLogged(!!token);
+        setAuthToken(token);
         setUserEmail(email);
         setIsSponsorState(sponsorFlag === "1");
-        setAuthToken(token);
+        setIsAdminState(adminFlag === "1");
 
         if (timeoutStr) {
           const parsed = parseInt(timeoutStr, 10);
@@ -2564,10 +2063,11 @@ export default function MainNavigation() {
         }
       } catch (e) {
         setIsLogged(false);
+        setAuthToken(null);
         setUserEmail(null);
         setIsSponsorState(false);
+        setIsAdminState(false);
         setSessionTimeoutMinutesState(30);
-        setAuthToken(null);
       } finally {
         setReady(true);
       }
@@ -2575,6 +2075,7 @@ export default function MainNavigation() {
     load();
   }, []);
 
+  // Auto logout por inactividad
   useEffect(() => {
     if (!isLogged) return;
 
@@ -2591,10 +2092,12 @@ export default function MainNavigation() {
           await AsyncStorage.removeItem("calmward_token");
           await AsyncStorage.removeItem("calmward_email");
           await AsyncStorage.removeItem("calmward_is_sponsor");
+          await AsyncStorage.removeItem("calmward_is_admin");
           setIsLogged(false);
+          setAuthToken(null);
           setUserEmail(null);
           setIsSponsorState(false);
-          setAuthToken(null);
+          setIsAdminState(false);
         }
       } catch {
         // ignoramos
@@ -2608,10 +2111,16 @@ export default function MainNavigation() {
     () => ({
       isLogged,
       userEmail,
-      isSponsor,
-      sessionTimeoutMinutes,
       authToken,
-      login: async (email: string, token: string, sponsorFlag?: boolean) => {
+      isSponsor,
+      isAdmin,
+      sessionTimeoutMinutes,
+      login: async (
+        email: string,
+        token: string,
+        sponsorFlag?: boolean,
+        adminFlag?: boolean
+      ) => {
         await AsyncStorage.setItem("calmward_token", token);
         await AsyncStorage.setItem("calmward_email", email);
         await AsyncStorage.setItem(
@@ -2625,21 +2134,29 @@ export default function MainNavigation() {
           );
           setIsSponsorState(sponsorFlag);
         }
+        if (typeof adminFlag === "boolean") {
+          await AsyncStorage.setItem(
+            "calmward_is_admin",
+            adminFlag ? "1" : "0"
+          );
+          setIsAdminState(adminFlag);
+        }
         setIsLogged(true);
-        setUserEmail(email);
         setAuthToken(token);
+        setUserEmail(email);
       },
       logout: async () => {
         await AsyncStorage.removeItem("calmward_token");
         await AsyncStorage.removeItem("calmward_email");
         await AsyncStorage.removeItem("calmward_is_sponsor");
+        await AsyncStorage.removeItem("calmward_is_admin");
         await AsyncStorage.removeItem("calmward_last_activity");
         setIsLogged(false);
+        setAuthToken(null);
         setUserEmail(null);
         setIsSponsorState(false);
-        setAuthToken(null);
+        setIsAdminState(false);
       },
-
       setSponsor: async (value: boolean) => {
         await AsyncStorage.setItem("calmward_is_sponsor", value ? "1" : "0");
         setIsSponsorState(value);
@@ -2653,7 +2170,7 @@ export default function MainNavigation() {
         setSessionTimeoutMinutesState(safe);
       },
     }),
-    [isLogged, userEmail, isSponsor, sessionTimeoutMinutes, authToken]
+    [isLogged, userEmail, authToken, isSponsor, isAdmin, sessionTimeoutMinutes]
   );
 
   if (!ready) {
@@ -2667,14 +2184,26 @@ export default function MainNavigation() {
   return (
     <AuthContext.Provider value={authContext}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Root" component={AppTabs} />
-        <Stack.Screen name="Auth" component={AuthScreen} />
-        <Stack.Screen name="Contacto" component={ContactScreen} />
-        <Stack.Screen name="Legal" component={LegalScreen} />
-        <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
-        <Stack.Screen name="SponsorPayment" component={SponsorPaymentScreen} />
-        <Stack.Screen name="Settings" component={SettingsScreen} />
-        <Stack.Screen name="AdminPanel" component={AdminPanelScreen} />
+        {isLogged ? (
+          <>
+            <Stack.Screen name="Root" component={AppTabs} />
+            <Stack.Screen name="Contacto" component={ContactScreen} />
+            <Stack.Screen name="Legal" component={LegalScreen} />
+            <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
+            <Stack.Screen
+              name="SponsorPayment"
+              component={SponsorPaymentScreen}
+            />
+            <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
+          </>
+        ) : (
+          <>
+            <Stack.Screen name="Auth" component={AuthScreen} />
+            <Stack.Screen name="Contacto" component={ContactScreen} />
+            <Stack.Screen name="Legal" component={LegalScreen} />
+          </>
+        )}
       </Stack.Navigator>
     </AuthContext.Provider>
   );
@@ -2686,6 +2215,111 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: "#F3F4F6",
+  },
+    // Home mejorado
+  homeHero: {
+    backgroundColor: "#0F172A",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  homeHeroTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#E5E7EB",
+    marginBottom: 4,
+  },
+  homeHeroSubtitle: {
+    fontSize: 13,
+    color: "#9CA3AF",
+    marginBottom: 12,
+  },
+  homeQuickRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  homeQuickCard: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 12,
+  },
+  homeQuickCardPrimary: {
+    backgroundColor: "#0EA5E9",
+    justifyContent: "space-between",
+  },
+  homeQuickTitle: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  homeQuickText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#F9FAFB",
+  },
+  homeMiniCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 12,
+    backgroundColor: "#111827",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  homeMiniTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#F9FAFB",
+  },
+  homeMiniText: {
+    fontSize: 11,
+    color: "#9CA3AF",
+  },
+
+  // Resumen de días
+  daySummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  daySummaryBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    backgroundColor: "#0EA5E9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  daySummaryRating: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+  daySummaryDate: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  daySummaryNote: {
+    fontSize: 12,
+    color: "#4B5563",
+  },
+  daySummaryNoteEmpty: {
+    fontSize: 12,
+    color: "#9CA3AF",
+  },
+  daySeeMoreBtn: {
+    marginTop: 8,
+    paddingVertical: 8,
+    borderRadius: 999,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+  },
+  daySeeMoreText: {
+    fontSize: 12,
+    color: "#374151",
+    fontWeight: "500",
   },
   loadingScreen: {
     flex: 1,
@@ -2729,6 +2363,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#6B7280",
   },
+    passwordRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+  },
+  showPasswordBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  showPasswordText: {
+    fontSize: 11,
+    color: "#0EA5E9",
+    fontWeight: "600",
+  },
+  // Footer
   footerContainer: {
     marginTop: 16,
     paddingTop: 12,
@@ -2770,6 +2420,7 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
     textAlign: "center",
   },
+  // Auth
   authScroll: {
     padding: 16,
     paddingBottom: 32,
@@ -2877,6 +2528,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#DC2626",
   },
+  passwordHint: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6B7280",
+  },
+  genderRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 4,
+  },
+  genderChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    backgroundColor: "#F9FAFB",
+  },
+  genderChipActive: {
+    backgroundColor: "#0EA5E9",
+    borderColor: "#0EA5E9",
+  },
+  genderChipText: {
+    fontSize: 12,
+    color: "#4B5563",
+    fontWeight: "500",
+  },
+  genderChipTextActive: {
+    color: "#FFFFFF",
+  },
+  // Talk
   modeRow: {
     flexDirection: "row",
     marginTop: 12,
@@ -2973,6 +2655,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#9CA3AF",
   },
+  // Day
   ratingRow: {
     flexDirection: "row",
     marginTop: 8,
@@ -3051,6 +2734,7 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontWeight: "500",
   },
+  // Perfil
   logoutBtn: {
     marginTop: 20,
     backgroundColor: "#F97373",
@@ -3073,6 +2757,18 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "600",
   },
+  adminPanelButton: {
+    marginTop: 12,
+    backgroundColor: "#111827",
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: "center",
+  },
+  adminPanelButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  // Urgente
   urgentMainCard: {
     borderLeftWidth: 4,
     borderLeftColor: "#DC2626",
@@ -3103,6 +2799,7 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "600",
   },
+  // Contacto
   contactBtn: {
     marginTop: 12,
     backgroundColor: "#0EA5E9",
@@ -3114,6 +2811,7 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "600",
   },
+  // Patrocinios / carrusel
   sponsorCard: {
     borderLeftWidth: 3,
     borderLeftColor: "#0EA5E9",
@@ -3202,6 +2900,7 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "600",
   },
+  // Pago patrocinio
   paymentMethodRow: {
     flexDirection: "row",
     marginTop: 8,
@@ -3240,6 +2939,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 15,
   },
+  // Settings
   settingsHint: {
     fontSize: 12,
     color: "#6B7280",
@@ -3271,18 +2971,73 @@ const styles = StyleSheet.create({
   settingsOptionTextActive: {
     color: "#FFFFFF",
   },
+  // Admin panel
+  adminUserRow: {
+    flexDirection: "row",
+    marginTop: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+    gap: 8,
+  },
+  adminUserEmail: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  adminUserMeta: {
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  adminUserButtons: {
+    justifyContent: "center",
+    alignItems: "flex-end",
+    gap: 4,
+  },
+  adminChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#E5E7EB",
+  },
+  adminChipText: {
+    fontSize: 11,
+    color: "#111827",
+    fontWeight: "500",
+  },
+  adminDeleteButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#DC2626",
+  },
+  adminDeleteButtonText: {
+    fontSize: 11,
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  reloadUsersButton: {
+    marginTop: 12,
+    backgroundColor: "#0EA5E9",
+    borderRadius: 999,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  reloadUsersButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  // Sponsor stats
   summaryRow: {
     flexDirection: "row",
     marginTop: 12,
-    gap: 12,
+    gap: 8,
   },
   summaryBox: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#F3F4F6",
     borderRadius: 12,
     padding: 12,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
   },
   summaryLabel: {
     fontSize: 12,
@@ -3293,61 +3048,5 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: "#111827",
-  },
-  genderRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 4,
-  },
-  genderChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    backgroundColor: "#F9FAFB",
-  },
-  genderChipActive: {
-    backgroundColor: "#0EA5E9",
-    borderColor: "#0EA5E9",
-  },
-  genderChipText: {
-    fontSize: 12,
-    color: "#4B5563",
-    fontWeight: "500",
-  },
-  genderChipTextActive: {
-    color: "#FFFFFF",
-  },
-  genderHint: {
-    marginTop: 4,
-    fontSize: 11,
-    color: "#9CA3AF",
-  },
-  profileButtonsRow: {
-    marginTop: 12,
-  },
-  profileButton: {
-    marginTop: 8,
-    backgroundColor: "#0EA5E9",
-    borderRadius: 999,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  profileButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "600",
-  },
-  profileButtonSecondary: {
-    marginTop: 8,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 999,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  profileButtonSecondaryText: {
-    color: "#111827",
-    fontWeight: "500",
   },
 });
