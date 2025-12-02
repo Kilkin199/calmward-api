@@ -1,5 +1,5 @@
 // api/index.js
-// Servidor Calmward: IA Groq + Auth con PostgreSQL + panel admin + Comunidad anónima
+// Servidor Calmward: IA Groq + Auth con PostgreSQL + Comunidad anónima
 
 const express = require("express");
 const cors = require("cors");
@@ -7,12 +7,9 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 
-// Polyfill fetch si no existe (Render / Node antiguos)
-const fetch =
-  typeof global.fetch === "function"
-    ? global.fetch
-    : (...args) =>
-        import("node-fetch").then(({ default: f }) => f(...args));
+// Polyfill de fetch para Node (Render)
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 const app = express();
 app.use(cors());
@@ -20,36 +17,90 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// ---------- CONFIG DB (PostgreSQL) ----------
+// ===================== CONFIG DB (PostgreSQL) =====================
 
-const DATABASE_URL = process.env.DATABASE_URL || null;
+const DATABASE_URL = process.env.DATABASE_URL;
 let pool = null;
 
-if (DATABASE_URL) {
+if (!DATABASE_URL) {
+  console.warn(
+    "[Calmward API] WARNING: No hay DATABASE_URL. Auth real y comunidad NO funcionarán."
+  );
+} else {
   pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: false }, // típico en Render
   });
-  console.log("[Calmward API] DATABASE_URL detectada, usando PostgreSQL.");
-} else {
-  console.warn(
-    "[Calmward API] WARNING: No hay DATABASE_URL. Auth real NO funcionará."
+}
+
+// Crea/actualiza tablas de usuarios, sesiones y comunidad
+async function ensureSchema() {
+  if (!pool) return;
+
+  const sql = `
+    -- Tabla usuarios básica
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      is_sponsor BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Campo de ban (si no existe)
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- Tabla de sesiones
+    CREATE TABLE IF NOT EXISTS sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Posts anónimos
+    CREATE TABLE IF NOT EXISTS community_posts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Likes (un usuario solo puede likear una vez cada post)
+    CREATE TABLE IF NOT EXISTS community_likes (
+      id SERIAL PRIMARY KEY,
+      post_id INTEGER NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (post_id, user_id)
+    );
+
+    -- Comentarios
+    CREATE TABLE IF NOT EXISTS community_comments (
+      id SERIAL PRIMARY KEY,
+      post_id INTEGER NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
+  try {
+    await pool.query(sql);
+    console.log("[Calmward API] Esquema OK (users, sessions, comunidad).");
+  } catch (err) {
+    console.error("[Calmward API] Error creando esquema:", err);
+  }
+}
+
+if (pool) {
+  ensureSchema().catch((e) =>
+    console.error("[Calmward API] Error en ensureSchema:", e)
   );
 }
 
-// ---------- HELPERS DB / AUTH ----------
-
-function normalizeEmail(email) {
-  return String(email || "").trim().toLowerCase();
-}
-
-function isStrongPassword(pwd) {
-  if (typeof pwd !== "string") return false;
-  if (pwd.length < 10) return false;
-  if (!/[A-Z]/.test(pwd)) return false; // al menos una mayúscula
-  return true;
-}
-
+// Helpers para tokens
 function randomToken() {
   return (
     Math.random().toString(36).slice(2) +
@@ -58,672 +109,513 @@ function randomToken() {
   );
 }
 
-async function ensureDb() {
-  if (!pool) return;
-
-  const sql = `
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      name TEXT,
-      gender TEXT,
-      country TEXT,
-      is_sponsor BOOLEAN NOT NULL DEFAULT FALSE,
-      is_admin  BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      token TEXT UNIQUE NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    -- Posts anónimos de Comunidad
-    CREATE TABLE IF NOT EXISTS community_posts (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      body TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS community_likes (
-      id SERIAL PRIMARY KEY,
-      post_id INTEGER NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      UNIQUE(post_id, user_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS community_comments (
-      id SERIAL PRIMARY KEY,
-      post_id INTEGER NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
-      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      body TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `;
-
-  await pool.query(sql);
-
-  // Si no hay ningún admin, marcamos al primer usuario como admin
-  await pool.query(`
-    UPDATE users
-    SET is_admin = TRUE
-    WHERE id = (
-      SELECT id FROM users ORDER BY id ASC LIMIT 1
-    )
-    AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = TRUE);
-  `);
-
-  console.log(
-    "[Calmward API] Tablas listas (users, sessions, community_*). Admin inicial asignado (si había usuarios)."
-  );
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
 }
 
-async function findUserByEmail(email) {
-  if (!pool) return null;
-  const norm = normalizeEmail(email);
-  const q = await pool.query("SELECT * FROM users WHERE email = $1 LIMIT 1", [
-    norm,
-  ]);
-  return q.rows[0] || null;
+// ===================== CONFIG IA GROQ =====================
+
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+// IMPORTANTE: este modelo debe existir en Groq
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+
+// Prompts con dos modos bien diferenciados
+
+const SYSTEM_LISTEN = `
+Eres Calmward, una IA de apoyo emocional centrada en ESCUCHAR y ACOMPAÑAR.
+
+Tu modo actual es: "solo escúchame".
+
+Estilo:
+- Hablas como una persona cercana, cálida y respetuosa.
+- Usas español sencillo, sin tecnicismos.
+- Te enfocas en validar las emociones, no en dar soluciones.
+- Puedes hacer alguna pregunta suave para entender mejor, pero sin interrogar.
+
+Límites:
+- No eres psicólogo, psiquiatra ni médico. No haces diagnósticos ni das consejos médicos.
+- No prometes resultados seguros ("todo va a salir bien").
+- No minimizas ("no es para tanto", "hay gente peor").
+
+Objetivo:
+- Que la persona sienta que alguien está con ella en lo que cuenta.
+- Devolverle sus emociones con otras palabras para que se sienta comprendida.
+- No des listas de tareas ni planes; solo acompañamiento y comprensión.
+`;
+
+const SYSTEM_HELP = `
+Eres Calmward, una IA de apoyo emocional en modo "ayúdame a ordenar".
+
+Tu función aquí:
+- Ayudar a la persona a ENTENDER mejor lo que le pasa.
+- Separar problemas, ponerles nombre y proponer PASOS PEQUEÑOS y realistas.
+
+Estilo:
+- Hablas en español cercano y tranquilo.
+- Estructuras tus respuestas: primero demuestras que has entendido, luego ordenas, luego propones 1-2 acciones pequeñas.
+- Puedes usar viñetas o pasos numerados, pero sin soltar sermones.
+
+Límites:
+- No eres profesional sanitario, no haces diagnósticos ni recomendaciones médicas.
+- Si aparecen ideas de autolesión, suicidio o violencia, anima a buscar ayuda profesional o servicios de emergencia, pero sin dar instrucciones médicas.
+
+Muy importante:
+- Las acciones deben ser concretas y pequeñas, por ejemplo:
+  - "Escribir 3 frases sobre lo que sientes ahora mismo."
+  - "Mandar un mensaje a una persona de confianza."
+  - "Apuntar una sola cosa que quieras probar esta semana."
+
+- Evita frases hechas genéricas; responde siempre de forma específica a lo que la persona ha contado.
+`;
+
+// Normaliza historial que pueda venir del cliente
+function normalizeHistory(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .map((m) => ({
+      role: m?.role === "assistant" ? "assistant" : "user",
+      content: typeof m?.content === "string" ? m.content : "",
+    }))
+    .filter((m) => m.content.trim().length > 0);
 }
 
-async function createUserWithProfile(email, password, name, gender, country) {
-  if (!pool) throw new Error("DB no configurada.");
-  const norm = normalizeEmail(email);
-  const hash = await bcrypt.hash(password, 10);
+// ===================== HELPERS SESIÓN + BAN (para Comunidad) =====================
+
+// Buscar usuario por token de sesión
+async function getUserFromToken(token) {
+  if (!pool || !token) return null;
 
   const q = await pool.query(
     `
-    INSERT INTO users (email, password_hash, name, gender, country)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, email, name, gender, country, is_sponsor, is_admin, created_at
-  `,
-    [norm, hash, name || null, gender || null, country || null]
+      SELECT u.id, u.email, u.is_sponsor, u.is_banned
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.token = $1
+      LIMIT 1
+    `,
+    [token]
   );
 
+  if (q.rows.length === 0) return null;
   return q.rows[0];
 }
 
-async function createSession(userId) {
-  if (!pool) throw new Error("DB no configurada.");
-  const token = randomToken();
-  await pool.query(
-    `
-    INSERT INTO sessions (user_id, token)
-    VALUES ($1, $2)
-  `,
-    [userId, token]
-  );
-  return token;
-}
-
-async function getUserFromToken(token) {
-  if (!pool || !token) return null;
-  const q = await pool.query(
-    `
-    SELECT u.*
-    FROM sessions s
-    JOIN users u ON u.id = s.user_id
-    WHERE s.token = $1
-    LIMIT 1
-  `,
-    [token]
-  );
-  return q.rows[0] || null;
-}
-
-function getTokenFromRequest(req) {
-  const header = req.headers["x-session-token"] || req.headers["authorization"];
-  if (!header) return null;
-  if (typeof header === "string" && header.startsWith("Bearer ")) {
-    return header.slice("Bearer ".length).trim();
+// Extraer token de Authorization o cabecera X-Session-Token
+function extractTokenFromRequest(req) {
+  const auth = req.headers["authorization"];
+  if (auth && typeof auth === "string" && auth.startsWith("Bearer ")) {
+    return auth.slice("Bearer ".length).trim();
   }
-  if (typeof header === "string") return header.trim();
+  const alt = req.headers["x-session-token"];
+  if (alt && typeof alt === "string") {
+    return alt.trim();
+  }
   return null;
 }
 
-async function getUserFromRequest(req) {
-  const token = getTokenFromRequest(req);
-  if (!token) return null;
-  const user = await getUserFromToken(token);
-  if (!user) return null;
-  return { user, token };
-}
-
-function requireAuth(req, res, next) {
-  getUserFromRequest(req)
-    .then((ctx) => {
-      if (!ctx) {
-        return res.status(401).json({ error: "Sesión no válida." });
-      }
-      req.calmwardUser = ctx.user;
-      req.calmwardToken = ctx.token;
-      next();
-    })
-    .catch((err) => {
-      console.error("Error requireAuth:", err);
-      res.status(500).json({ error: "Error interno de autenticación." });
+// Forzar que haya user y que no esté baneado
+async function getUserFromRequestOrThrow(req, res) {
+  if (!pool) {
+    res.status(500).json({
+      error: "No hay base de datos configurada en el servidor.",
     });
-}
-
-function requireAdmin(req, res, next) {
-  getUserFromRequest(req)
-    .then((ctx) => {
-      if (!ctx || !ctx.user.is_admin) {
-        return res
-          .status(403)
-          .json({ error: "Solo administradores pueden usar esta ruta." });
-      }
-      req.calmwardUser = ctx.user;
-      req.calmwardToken = ctx.token;
-      next();
-    })
-    .catch((err) => {
-      console.error("Error requireAdmin:", err);
-      res.status(500).json({ error: "Error interno de autenticación." });
-    });
-}
-
-// ---------- CONFIG IA (GROQ) ----------
-
-const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
-const GROQ_MODEL = process.env.GROQ_MODEL || "mixtral-8x7b-32768";
-const GROQ_API_URL =
-  process.env.GROQ_API_URL ||
-  "https://api.groq.com/openai/v1/chat/completions";
-
-async function callGroqChat({ mode, message, history }) {
-  if (!GROQ_API_KEY) {
-    return {
-      reply:
-        "El servidor de Calmward no tiene configurada la clave de IA. Habla con quien mantiene la app.",
-    };
+    return null;
   }
 
-  const baseSystem =
-    "Eres una IA de apoyo emocional llamada Calmward. Respondes en español, con tono empático, claro y sin dramatizar. No das consejos médicos ni legales. Si percibes riesgo de autolesión, recomiendas buscar ayuda profesional y servicios de emergencia, sin órdenes directas.";
+  const token = extractTokenFromRequest(req);
+  if (!token) {
+    res.status(401).json({ error: "Debes iniciar sesión para usar la comunidad." });
+    return null;
+  }
 
-  const systemExtra =
-    mode === "ayudame_a_ordenar"
-      ? "El usuario quiere ordenar ideas, tomar pequeñas decisiones y ver pasos concretos pero suaves. Ayuda a resumir, ordenar y proponer pasos pequeños."
-      : "El usuario quiere principalmente ser escuchado. Prioriza validar emociones y reflejar lo que cuenta antes de sugerir nada.";
+  try {
+    const user = await getUserFromToken(token);
+    if (!user) {
+      res.status(401).json({ error: "Sesión no válida o expirada." });
+      return null;
+    }
 
-  const messages = [
-    { role: "system", content: baseSystem + " " + systemExtra },
+    if (user.is_banned) {
+      res.status(403).json({
+        error:
+          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+      });
+      return null;
+    }
+
+    return { user, token };
+  } catch (err) {
+    console.error("[Comunidad] Error en getUserFromRequestOrThrow:", err);
+    res.status(500).json({ error: "Error interno validando la sesión." });
+    return null;
+  }
+}
+
+// Filtro básico anti-contenido tóxico
+function isToxicContent(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+
+  // Lista básica, se puede ampliar cuando quieras
+  const badFragments = [
+    "mierda",
+    "puta",
+    "gilipollas",
+    "imbecil",
+    "imbécil",
+    "subnormal",
+    "te voy a pegar",
+    "te voy a hacer daño",
+    "abusar de ti",
+    "te manipulo",
   ];
 
-  if (Array.isArray(history)) {
-    for (const m of history) {
-      if (!m || typeof m.content !== "string") continue;
-      if (m.role === "user" || m.role === "assistant") {
-        messages.push({ role: m.role, content: m.content });
-      }
+  return badFragments.some((bad) => lower.includes(bad));
+}
+
+// Banear usuario y cerrar todas sus sesiones
+async function blockUserAndKillSessions(userId) {
+  if (!pool || !userId) return;
+
+  await pool.query(
+    `
+      UPDATE users
+      SET is_banned = TRUE
+      WHERE id = $1
+    `,
+    [userId]
+  );
+
+  await pool.query(
+    `
+      DELETE FROM sessions
+      WHERE user_id = $1
+    `,
+    [userId]
+  );
+
+  console.log(`[Comunidad] Usuario ${userId} bloqueado y sesiones cerradas.`);
+}
+
+// ===================== RUTA DE SALUD =====================
+
+app.get("/", async (_req, res) => {
+  let dbOk = false;
+  if (pool) {
+    try {
+      await pool.query("SELECT 1");
+      dbOk = true;
+    } catch {
+      dbOk = false;
     }
   }
 
-  messages.push({
-    role: "user",
-    content: message || "",
-  });
-
-  const body = {
+  res.json({
+    ok: true,
+    service: "calmward-api",
+    provider: "groq",
     model: GROQ_MODEL,
-    messages,
-    temperature: 0.7,
-  };
-
-  const res = await fetch(GROQ_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
-    },
-    body: JSON.stringify(body),
+    hasApiKey: !!GROQ_API_KEY,
+    hasDatabase: !!pool,
+    dbOk,
   });
-
-  if (!res.ok) {
-    console.error("Groq error status:", res.status, await res.text());
-    return {
-      reply:
-        "Ahora mismo no puedo contactar con el servicio de IA. Inténtalo otra vez en unos minutos.",
-    };
-  }
-
-  const data = await res.json();
-  const choice = data.choices && data.choices[0];
-  const text = choice?.message?.content || "";
-  return { reply: text || "No he podido generar respuesta ahora mismo." };
-}
-
-// ---------- MODERACIÓN TEXTO COMUNIDAD ----------
-
-const COMMUNITY_BANNED_PATTERNS = [
-  /suicid(a|ate|arse)/i,
-  /m[aá]tate/i,
-  /matar(te|os)?/i,
-  /nadie te va a? echar de menos/i,
-  /eres una? mierda/i,
-  /ojal[aá] te mueras/i,
-  /insulta(r|do)/i,
-  /gilipollas/i,
-  /subnormal/i,
-  /maric[oó]n/i,
-  /put[ao]/i,
-  /negr(o|a) de mierda/i,
-];
-
-function checkCommunityText(raw) {
-  const body = String(raw || "").trim();
-
-  if (!body) {
-    return {
-      ok: false,
-      message: "Escribe algo antes de publicar.",
-    };
-  }
-
-  if (body.length < 10) {
-    return {
-      ok: false,
-      message:
-        "El mensaje es muy corto. Intenta explicar un poco más lo que quieres compartir.",
-    };
-  }
-
-  if (body.length > 1500) {
-    return {
-      ok: false,
-      message:
-        "El mensaje es muy largo. Intenta resumirlo un poco para que sea más fácil de leer.",
-    };
-  }
-
-  for (const re of COMMUNITY_BANNED_PATTERNS) {
-    if (re.test(body)) {
-      return {
-        ok: false,
-        message:
-          "Tu mensaje parece contener lenguaje dañino u ofensivo. Intenta escribirlo de forma que no ataque a nadie ni anime a hacerse daño.",
-      };
-    }
-  }
-
-  return { ok: true, message: null };
-}
-
-// ---------- ENDPOINTS BÁSICOS ----------
-
-app.get("/", (req, res) => {
-  res.json({ ok: true, message: "Calmward API viva." });
 });
 
-// ---------- AUTH ----------
+// ===================== AUTH: REGISTER + LOGIN =====================
 
-// Registro + login en un paso
+// POST /auth/register-and-login
+// Crea usuario (si no existe) o hace login si ya existe
 app.post("/auth/register-and-login", async (req, res) => {
   try {
-    if (!pool) {
-      return res
-        .status(500)
-        .json({ error: "La base de datos no está configurada." });
-    }
-
-    let { email, password, name, gender, country } = req.body || {};
-
-    email = normalizeEmail(email);
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ error: "Faltan correo o contraseña para registrarse." });
-    }
-
-    if (!isStrongPassword(password)) {
-      return res.status(400).json({
+    if (!pool || !DATABASE_URL) {
+      return res.status(500).json({
         error:
-          "La contraseña debe tener mínimo 10 caracteres y al menos una letra mayúscula.",
+          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
       });
     }
 
-    const existing = await findUserByEmail(email);
-    if (existing) {
-      return res
-        .status(400)
-        .json({ error: "Ya existe una cuenta con ese correo." });
+    const { email, password } = req.body || {};
+    const normEmail = normalizeEmail(email);
+    const plainPass = String(password || "");
+
+    if (!normEmail || !normEmail.includes("@")) {
+      return res.status(400).json({ error: "Correo no válido." });
     }
 
-    const user = await createUserWithProfile(
-      email,
-      password,
-      name,
-      gender,
-      country
-    );
-    const token = await createSession(user.id);
+    // Reglas de contraseña: mínimo 10 y al menos 1 mayúscula
+    if (plainPass.length < 10) {
+      return res.status(400).json({
+        error: "La contraseña debe tener al menos 10 caracteres.",
+      });
+    }
+    if (!/[A-ZÁÉÍÓÚÑ]/.test(plainPass)) {
+      return res.status(400).json({
+        error: "La contraseña debe incluir al menos una letra mayúscula.",
+      });
+    }
 
-    res.json({
+    const existing = await pool.query(
+      "SELECT id, email, password_hash, is_sponsor FROM users WHERE email = $1",
+      [normEmail]
+    );
+
+    let userRow;
+
+    if (existing.rows.length > 0) {
+      // Ya existe: intentar login
+      userRow = existing.rows[0];
+      const ok = await bcrypt.compare(plainPass, userRow.password_hash);
+      if (!ok) {
+        return res
+          .status(401)
+          .json({ error: "Correo o contraseña incorrectos." });
+      }
+    } else {
+      // No existe: crear usuario
+      const hash = await bcrypt.hash(plainPass, 10);
+      const inserted = await pool.query(
+        `
+          INSERT INTO users (email, password_hash)
+          VALUES ($1, $2)
+          RETURNING id, email, is_sponsor
+        `,
+        [normEmail, hash]
+      );
+      userRow = inserted.rows[0];
+    }
+
+    const token = randomToken();
+    await pool.query(
+      "INSERT INTO sessions (user_id, token) VALUES ($1, $2)",
+      [userRow.id, token]
+    );
+
+    return res.json({
       token,
-      email: user.email,
-      name: user.name,
-      gender: user.gender,
-      country: user.country,
-      isSponsor: !!user.is_sponsor,
-      isAdmin: !!user.is_admin,
+      email: userRow.email,
+      isSponsor: !!userRow.is_sponsor,
     });
   } catch (err) {
-    console.error("Error /auth/register-and-login:", err);
-    res.status(500).json({ error: "Error interno al registrar." });
+    console.error("Error en /auth/register-and-login:", err);
+    return res.status(500).json({
+      error:
+        "Ha habido un problema al crear o iniciar sesión. Inténtalo de nuevo en unos segundos.",
+    });
   }
 });
 
-// Login
+// POST /auth/login
+// Login normal con email + password
 app.post("/auth/login", async (req, res) => {
   try {
-    if (!pool) {
-      return res
-        .status(500)
-        .json({ error: "La base de datos no está configurada." });
+    if (!pool || !DATABASE_URL) {
+      return res.status(500).json({
+        error:
+          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
+      });
     }
 
-    let { email, password } = req.body || {};
-    email = normalizeEmail(email);
+    const { email, password } = req.body || {};
+    const normEmail = normalizeEmail(email);
+    const plainPass = String(password || "");
 
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ error: "Faltan correo o contraseña para iniciar sesión." });
-    }
-
-    const user = await findUserByEmail(email);
-    if (!user) {
+    if (!normEmail || !normEmail.includes("@") || !plainPass) {
       return res
         .status(400)
-        .json({ error: "Correo o contraseña no válidos." });
+        .json({ error: "Debes indicar correo y contraseña." });
     }
 
-    const ok = await bcrypt.compare(password, user.password_hash || "");
+    const q = await pool.query(
+      "SELECT id, email, password_hash, is_sponsor, is_banned FROM users WHERE email = $1",
+      [normEmail]
+    );
+
+    if (q.rows.length === 0) {
+      return res
+        .status(401)
+        .json({ error: "No existe ninguna cuenta con ese correo." });
+    }
+
+    const userRow = q.rows[0];
+
+    if (userRow.is_banned) {
+      return res.status(403).json({
+        error:
+          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+      });
+    }
+
+    const ok = await bcrypt.compare(plainPass, userRow.password_hash);
     if (!ok) {
       return res
-        .status(400)
-        .json({ error: "Correo o contraseña no válidos." });
+        .status(401)
+        .json({ error: "Correo o contraseña incorrectos." });
     }
 
-    const token = await createSession(user.id);
+    const token = randomToken();
+    await pool.query(
+      "INSERT INTO sessions (user_id, token) VALUES ($1, $2)",
+      [userRow.id, token]
+    );
 
-    res.json({
+    return res.json({
       token,
-      email: user.email,
-      name: user.name,
-      gender: user.gender,
-      country: user.country,
-      isSponsor: !!user.is_sponsor,
-      isAdmin: !!user.is_admin,
+      email: userRow.email,
+      isSponsor: !!userRow.is_sponsor,
     });
   } catch (err) {
-    console.error("Error /auth/login:", err);
-    res.status(500).json({ error: "Error interno al iniciar sesión." });
+    console.error("Error en /auth/login:", err);
+    return res.status(500).json({
+      error:
+        "Ha habido un problema al iniciar sesión. Inténtalo de nuevo en unos segundos.",
+    });
   }
 });
 
-// Perfil
-app.get("/auth/profile", requireAuth, async (req, res) => {
-  const u = req.calmwardUser;
-  res.json({
-    email: u.email,
-    name: u.name,
-    gender: u.gender,
-    country: u.country,
-    isSponsor: !!u.is_sponsor,
-    isAdmin: !!u.is_admin,
-    createdAt: u.created_at,
-  });
-});
+// ===================== COMUNIDAD ANÓNIMA =====================
 
-// ---------- IA TALK (Groq) ----------
-
-app.post("/ai/talk", async (req, res) => {
+// Crear post anónimo (requiere sesión; si es tóxico, ban y fuera)
+app.post("/community/posts", async (req, res) => {
   try {
-    const { mode, message, history } = req.body || {};
-    if (!message || typeof message !== "string") {
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    if (!pool) {
+      return res.status(500).json({
+        error: "No hay base de datos configurada.",
+      });
+    }
+
+    let { text } = req.body || {};
+    text = typeof text === "string" ? text.trim() : "";
+
+    if (!text || text.length < 3) {
       return res
         .status(400)
-        .json({ error: "Falta el campo 'message' en la petición." });
-    }
-    const safeMode =
-      mode === "ayudame_a_ordenar" ? "ayudame_a_ordenar" : "solo_escuchame";
-
-    const result = await callGroqChat({
-      mode: safeMode,
-      message,
-      history: Array.isArray(history) ? history : [],
-    });
-
-    res.json({ reply: result.reply });
-  } catch (err) {
-    console.error("Error /ai/talk:", err);
-    res.status(500).json({
-      error:
-        "No se ha podido obtener respuesta de la IA en este momento. Inténtalo de nuevo más tarde.",
-    });
-  }
-});
-
-// ---------- ADMIN: USUARIOS ----------
-
-// Listar usuarios (admin)
-app.get("/admin/users", requireAdmin, async (req, res) => {
-  try {
-    const q = await pool.query(
-      `
-      SELECT id, email, name, gender, country, is_sponsor, is_admin, created_at
-      FROM users
-      ORDER BY id ASC
-    `
-    );
-    res.json({ users: q.rows });
-  } catch (err) {
-    console.error("Error /admin/users:", err);
-    res.status(500).json({ error: "Error interno al listar usuarios." });
-  }
-});
-
-// Actualizar flags de usuario (sponsor/admin) o datos básicos
-app.patch("/admin/users/:id", requireAdmin, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (!id) {
-      return res.status(400).json({ error: "ID de usuario no válido." });
+        .json({ error: "El post es demasiado corto. Escribe un poco más." });
     }
 
-    const { isSponsor, isAdmin, name, gender, country } = req.body || {};
+    if (isToxicContent(text)) {
+      await blockUserAndKillSessions(user.id);
+      return res.status(403).json({
+        error:
+          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+      });
+    }
 
-    const q = await pool.query(
+    const insert = await pool.query(
       `
-      UPDATE users
-      SET
-        is_sponsor = COALESCE($2, is_sponsor),
-        is_admin   = COALESCE($3, is_admin),
-        name       = COALESCE($4, name),
-        gender     = COALESCE($5, gender),
-        country    = COALESCE($6, country)
-      WHERE id = $1
-      RETURNING id, email, name, gender, country, is_sponsor, is_admin, created_at
-    `,
-      [
-        id,
-        typeof isSponsor === "boolean" ? isSponsor : null,
-        typeof isAdmin === "boolean" ? isAdmin : null,
-        name ?? null,
-        gender ?? null,
-        country ?? null,
-      ]
+        INSERT INTO community_posts (user_id, body)
+        VALUES ($1, $2)
+        RETURNING id, body, created_at
+      `,
+      [user.id, text]
     );
 
-    if (q.rowCount === 0) {
-      return res.status(404).json({ error: "Usuario no encontrado." });
-    }
+    const row = insert.rows[0];
 
-    res.json({ user: q.rows[0] });
-  } catch (err) {
-    console.error("Error /admin/users/:id PATCH:", err);
-    res.status(500).json({ error: "Error interno al actualizar usuario." });
-  }
-});
-
-// Eliminar usuario (admin)
-app.delete("/admin/users/:id", requireAdmin, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (!id) {
-      return res.status(400).json({ error: "ID de usuario no válido." });
-    }
-
-    const q = await pool.query("DELETE FROM users WHERE id = $1", [id]);
-    if (q.rowCount === 0) {
-      return res.status(404).json({ error: "Usuario no encontrado." });
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("Error /admin/users/:id DELETE:", err);
-    res.status(500).json({ error: "Error interno al eliminar usuario." });
-  }
-});
-
-// ---------- COMUNIDAD ANÓNIMA ----------
-
-// Crear post anónimo (requiere sesión, pero no mostramos nombre)
-app.post("/community/posts", requireAuth, async (req, res) => {
-  try {
-    const user = req.calmwardUser;
-    const { body } = req.body || {};
-
-    const check = checkCommunityText(body);
-    if (!check.ok) {
-      return res.status(400).json({ error: check.message });
-    }
-
-    const q = await pool.query(
-      `
-      INSERT INTO community_posts (user_id, body)
-      VALUES ($1, $2)
-      RETURNING id, body, created_at
-    `,
-      [user.id, body.trim()]
-    );
-
-    const post = q.rows[0];
-    res.json({
-      id: post.id,
-      body: post.body,
-      createdAt: post.created_at,
-      likes: 0,
-      comments: 0,
-      likedByMe: false,
+    return res.json({
+      ok: true,
+      post: {
+        id: row.id,
+        body: row.body,
+        createdAt: row.created_at,
+        likeCount: 0,
+        commentCount: 0,
+      },
     });
   } catch (err) {
-    console.error("Error POST /community/posts:", err);
-    res.status(500).json({
-      error: "No se ha podido publicar el mensaje. Inténtalo más tarde.",
-    });
+    console.error("Error en POST /community/posts:", err);
+    return res
+      .status(500)
+      .json({ error: "Error interno al crear el post anónimo." });
   }
 });
 
-// Listar posts (últimos primero)
-app.get("/community/posts", async (req, res) => {
+// Listar posts recientes
+app.get("/community/posts", async (_req, res) => {
   try {
-    let userId = null;
-    try {
-      const ctx = await getUserFromRequest(req);
-      if (ctx && ctx.user) userId = ctx.user.id;
-    } catch {
-      userId = null;
+    if (!pool) {
+      return res.status(500).json({
+        error: "No hay base de datos configurada.",
+      });
     }
 
-    const limit = Math.min(
-      50,
-      Math.max(1, parseInt(req.query.limit, 10) || 30)
-    );
-    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const limit = 50;
 
-    const q = await pool.query(
+    const result = await pool.query(
       `
-      SELECT
-        p.id,
-        p.body,
-        p.created_at,
-        COALESCE(lc.likes, 0) AS likes,
-        COALESCE(cc.comments, 0) AS comments,
-        CASE WHEN ul.user_id IS NULL THEN FALSE ELSE TRUE END AS liked_by_me
-      FROM community_posts p
-      LEFT JOIN (
-        SELECT post_id, COUNT(*) AS likes
-        FROM community_likes
-        GROUP BY post_id
-      ) lc ON lc.post_id = p.id
-      LEFT JOIN (
-        SELECT post_id, COUNT(*) AS comments
-        FROM community_comments
-        GROUP BY post_id
-      ) cc ON cc.post_id = p.id
-      LEFT JOIN community_likes ul
-        ON ul.post_id = p.id AND ul.user_id = $1
-      ORDER BY p.created_at DESC
-      LIMIT $2 OFFSET $3
-    `,
-      [userId || 0, limit, offset]
+        SELECT p.id,
+               p.body,
+               p.created_at,
+               COALESCE(l.cnt, 0)  AS like_count,
+               COALESCE(c.cnt, 0)  AS comment_count
+        FROM community_posts p
+        LEFT JOIN (
+          SELECT post_id, COUNT(*)::int AS cnt
+          FROM community_likes
+          GROUP BY post_id
+        ) l ON l.post_id = p.id
+        LEFT JOIN (
+          SELECT post_id, COUNT(*)::int AS cnt
+          FROM community_comments
+          GROUP BY post_id
+        ) c ON c.post_id = p.id
+        ORDER BY p.created_at DESC
+        LIMIT $1
+      `,
+      [limit]
     );
 
-    const posts = q.rows.map((row) => ({
+    const posts = result.rows.map((row) => ({
       id: row.id,
       body: row.body,
       createdAt: row.created_at,
-      likes: Number(row.likes || 0),
-      comments: Number(row.comments || 0),
-      likedByMe: !!row.liked_by_me,
+      likeCount: row.like_count,
+      commentCount: row.comment_count,
     }));
 
-    res.json({ posts });
+    return res.json({ ok: true, posts });
   } catch (err) {
-    console.error("Error GET /community/posts:", err);
-    res.status(500).json({
-      error: "No se han podido cargar los mensajes de la comunidad.",
-    });
+    console.error("Error en GET /community/posts:", err);
+    return res
+      .status(500)
+      .json({ error: "Error interno al listar los posts." });
   }
 });
 
-// Like / Unlike (toggle) de un post
-app.post("/community/posts/:id/like", requireAuth, async (req, res) => {
+// Like / unlike de un post (requiere sesión)
+app.post("/community/posts/:id/like", async (req, res) => {
   try {
-    const user = req.calmwardUser;
-    const postId = parseInt(req.params.id, 10);
-    if (!postId) {
-      return res.status(400).json({ error: "ID de post no válido." });
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    if (!pool) {
+      return res.status(500).json({
+        error: "No hay base de datos configurada.",
+      });
     }
 
-    // Comprobar existencia del post
-    const exists = await pool.query(
-      "SELECT id FROM community_posts WHERE id = $1",
-      [postId]
-    );
-    if (exists.rowCount === 0) {
-      return res.status(404).json({ error: "Post no encontrado." });
+    const postId = parseInt(req.params.id, 10);
+    if (!postId || Number.isNaN(postId)) {
+      return res.status(400).json({ error: "ID de post inválido." });
     }
 
     const existingLike = await pool.query(
       `
-      SELECT id FROM community_likes
-      WHERE post_id = $1 AND user_id = $2
-      LIMIT 1
-    `,
+        SELECT id
+        FROM community_likes
+        WHERE post_id = $1 AND user_id = $2
+      `,
       [postId, user.id]
     );
 
-    let liked = false;
-    if (existingLike.rowCount > 0) {
+    let liked;
+
+    if (existingLike.rows.length > 0) {
       await pool.query("DELETE FROM community_likes WHERE id = $1", [
         existingLike.rows[0].id,
       ]);
@@ -731,162 +623,214 @@ app.post("/community/posts/:id/like", requireAuth, async (req, res) => {
     } else {
       await pool.query(
         `
-        INSERT INTO community_likes (post_id, user_id)
-        VALUES ($1, $2)
-      `,
+          INSERT INTO community_likes (post_id, user_id)
+          VALUES ($1, $2)
+        `,
         [postId, user.id]
       );
       liked = true;
     }
 
-    const countQ = await pool.query(
+    const countRes = await pool.query(
       `
-      SELECT COUNT(*) AS likes
-      FROM community_likes
-      WHERE post_id = $1
-    `,
+        SELECT COUNT(*)::int AS c
+        FROM community_likes
+        WHERE post_id = $1
+      `,
       [postId]
     );
-    const likes = Number(countQ.rows[0]?.likes || 0);
 
-    res.json({ ok: true, liked, likes });
-  } catch (err) {
-    console.error("Error POST /community/posts/:id/like:", err);
-    res.status(500).json({
-      error: "No se ha podido actualizar el me gusta. Inténtalo de nuevo.",
+    const likeCount = countRes.rows[0]?.c ?? 0;
+
+    return res.json({
+      ok: true,
+      liked,
+      likeCount,
     });
+  } catch (err) {
+    console.error("Error en POST /community/posts/:id/like:", err);
+    return res
+      .status(500)
+      .json({ error: "Error interno al registrar el like." });
   }
 });
 
-// Crear comentario
-app.post("/community/posts/:id/comments", requireAuth, async (req, res) => {
+// Crear comentario (requiere sesión)
+app.post("/community/posts/:id/comments", async (req, res) => {
   try {
-    const user = req.calmwardUser;
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    if (!pool) {
+      return res.status(500).json({
+        error: "No hay base de datos configurada.",
+      });
+    }
+
     const postId = parseInt(req.params.id, 10);
-    const { body } = req.body || {};
-
-    if (!postId) {
-      return res.status(400).json({ error: "ID de post no válido." });
+    if (!postId || Number.isNaN(postId)) {
+      return res.status(400).json({ error: "ID de post inválido." });
     }
 
-    const exists = await pool.query(
-      "SELECT id FROM community_posts WHERE id = $1",
-      [postId]
-    );
-    if (exists.rowCount === 0) {
-      return res.status(404).json({ error: "Post no encontrado." });
+    let { text } = req.body || {};
+    text = typeof text === "string" ? text.trim() : "";
+
+    if (!text || text.length < 2) {
+      return res
+        .status(400)
+        .json({ error: "El comentario es demasiado corto." });
     }
 
-    const check = checkCommunityText(body);
-    if (!check.ok) {
-      return res.status(400).json({ error: check.message });
+    if (isToxicContent(text)) {
+      await blockUserAndKillSessions(user.id);
+      return res.status(403).json({
+        error:
+          "Tu cuenta ha sido bloqueada por incumplir las normas de la comunidad.",
+      });
     }
 
-    const q = await pool.query(
+    const insert = await pool.query(
       `
-      INSERT INTO community_comments (post_id, user_id, body)
-      VALUES ($1, $2, $3)
-      RETURNING id, body, created_at
-    `,
-      [postId, user.id, body.trim()]
+        INSERT INTO community_comments (post_id, user_id, body)
+        VALUES ($1, $2, $3)
+        RETURNING id, body, created_at
+      `,
+      [postId, user.id, text]
     );
 
-    const comment = q.rows[0];
+    const row = insert.rows[0];
 
-    const countQ = await pool.query(
-      `
-      SELECT COUNT(*) AS comments
-      FROM community_comments
-      WHERE post_id = $1
-    `,
-      [postId]
-    );
-
-    res.json({
-      id: comment.id,
-      body: comment.body,
-      createdAt: comment.created_at,
-      commentsCount: Number(countQ.rows[0]?.comments || 0),
+    return res.json({
+      ok: true,
+      comment: {
+        id: row.id,
+        postId,
+        body: row.body,
+        createdAt: row.created_at,
+      },
     });
   } catch (err) {
-    console.error("Error POST /community/posts/:id/comments:", err);
-    res.status(500).json({
-      error: "No se ha podido guardar el comentario.",
-    });
+    console.error("Error en POST /community/posts/:id/comments:", err);
+    return res
+      .status(500)
+      .json({ error: "Error interno al crear el comentario." });
   }
 });
 
 // Listar comentarios de un post
 app.get("/community/posts/:id/comments", async (req, res) => {
   try {
-    const postId = parseInt(req.params.id, 10);
-    if (!postId) {
-      return res.status(400).json({ error: "ID de post no válido." });
+    if (!pool) {
+      return res.status(500).json({
+        error: "No hay base de datos configurada.",
+      });
     }
 
-    const q = await pool.query(
+    const postId = parseInt(req.params.id, 10);
+    if (!postId || Number.isNaN(postId)) {
+      return res.status(400).json({ error: "ID de post inválido." });
+    }
+
+    const result = await pool.query(
       `
-      SELECT id, body, created_at
-      FROM community_comments
-      WHERE post_id = $1
-      ORDER BY created_at ASC
-    `,
+        SELECT id, body, created_at
+        FROM community_comments
+        WHERE post_id = $1
+        ORDER BY created_at ASC
+      `,
       [postId]
     );
 
-    const comments = q.rows.map((c) => ({
-      id: c.id,
-      body: c.body,
-      createdAt: c.created_at,
+    const comments = result.rows.map((row) => ({
+      id: row.id,
+      body: row.body,
+      createdAt: row.created_at,
     }));
 
-    res.json({ comments });
+    return res.json({ ok: true, comments });
   } catch (err) {
-    console.error("Error GET /community/posts/:id/comments:", err);
-    res.status(500).json({
-      error: "No se han podido cargar los comentarios.",
-    });
+    console.error("Error en GET /community/posts/:id/comments:", err);
+    return res
+      .status(500)
+      .json({ error: "Error interno al listar comentarios." });
   }
 });
 
-// Borrar post (solo admin)
-app.delete("/admin/community/posts/:id", requireAdmin, async (req, res) => {
+// ===================== IA: POST /ai/talk =====================
+
+app.post("/ai/talk", async (req, res) => {
   try {
-    const postId = parseInt(req.params.id, 10);
-    if (!postId) {
-      return res.status(400).json({ error: "ID de post no válido." });
+    if (!GROQ_API_KEY) {
+      console.error("Falta GROQ_API_KEY en el servidor");
+      return res.status(500).json({
+        error: "Falta GROQ_API_KEY en el servidor. Configúrala en Render.",
+      });
     }
 
-    const q = await pool.query(
-      "DELETE FROM community_posts WHERE id = $1",
-      [postId]
-    );
-    if (q.rowCount === 0) {
-      return res.status(404).json({ error: "Post no encontrado." });
+    const { message, mode = "solo_escuchame", history = [] } = req.body || {};
+
+    if (!message || typeof message !== "string") {
+      return res.status(400).json({ error: "Falta 'message' en el cuerpo." });
     }
 
-    res.json({ ok: true });
+    const systemPrompt =
+      mode === "ayudame_a_ordenar" ? SYSTEM_HELP : SYSTEM_LISTEN;
+
+    const chatHistory = normalizeHistory(history);
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...chatHistory,
+      { role: "user", content: message },
+    ];
+
+    const payload = {
+      model: GROQ_MODEL,
+      messages,
+      temperature: 0.7,
+    };
+
+    const groqRes = await fetch(GROQ_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!groqRes.ok) {
+      const text = await groqRes.text().catch(() => "");
+      console.error("Error Groq:", groqRes.status, text);
+      return res.status(500).json({
+        error: "No se pudo obtener respuesta de Calmward (Groq).",
+        status: groqRes.status,
+      });
+    }
+
+    const data = await groqRes.json().catch(() => ({}));
+
+    const replyText =
+      data?.choices?.[0]?.message?.content ??
+      "No he podido generar una respuesta ahora mismo.";
+
+    return res.json({ reply: replyText });
   } catch (err) {
-    console.error("Error DELETE /admin/community/posts/:id:", err);
-    res.status(500).json({
-      error: "No se ha podido eliminar el post.",
+    console.error("Error en /ai/talk:", err);
+    return res.status(500).json({
+      error:
+        "Ha habido un problema al hablar con el modelo. Inténtalo de nuevo en unos segundos.",
     });
   }
 });
 
-// ---------- ARRANQUE ----------
+// ===================== ARRANQUE SERVIDOR =====================
 
-ensureDb()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Calmward API escuchando en puerto ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Error inicializando DB:", err);
-    app.listen(PORT, () => {
-      console.log(
-        `Calmward API escuchando en puerto ${PORT}, pero la DB ha fallado al iniciar.`
-      );
-    });
-  });
+app.listen(PORT, () => {
+  console.log(`Calmward API escuchando en puerto ${PORT}`);
+  console.log(`? GROQ_MODEL = ${GROQ_MODEL}`);
+  console.log(
+    `? DB: ${DATABASE_URL ? "conectada (DATABASE_URL presente)" : "NO CONFIGURADA"}`
+  );
+});
