@@ -16,7 +16,7 @@
     "@react-navigation/native-stack": "^7.6.3",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
-    "expo": "~54.0.25",
+    "expo": "~54.0.26",
     "expo-status-bar": "~3.0.8",
     "express": "^5.2.0",
     "node-fetch": "^3.3.2",

@@ -1,11 +1,13 @@
 // api/index.js
 // Servidor Calmward: IA Groq + Auth con PostgreSQL + Comunidad anónima
+// + PayPal Subscriptions reales + Webhook
+// Planes: sponsor_monthly, sponsor_yearly, premium_monthly, premium_yearly
+// Soporta Premium + Sponsor simultáneos con fechas separadas
 
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
-const crypto = require("crypto");
 
 // Polyfill de fetch para Node (Render)
 const fetch = (...args) =>
@@ -29,16 +31,16 @@ if (!DATABASE_URL) {
 } else {
   pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // típico en Render
+    ssl: { rejectUnauthorized: false },
   });
 }
 
-// Crea/actualiza tablas de usuarios, sesiones y comunidad
+// Crea/actualiza tablas
 async function ensureSchema() {
   if (!pool) return;
 
   const sql = `
-    -- Tabla usuarios básica
+    -- Tabla usuarios
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -47,15 +49,30 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Campo de ban global (por si lo quieres usar en el futuro)
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE;
 
-    -- Campo de ban SOLO para la zona Comunidad
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS community_banned BOOLEAN NOT NULL DEFAULT FALSE;
 
-    -- Tabla de sesiones
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- Suscripciones legacy
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_premium BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS subscription_type TEXT;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS subscription_valid_until TIMESTAMPTZ;
+
+    -- NUEVO: fechas separadas
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS premium_valid_until TIMESTAMPTZ;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS sponsor_valid_until TIMESTAMPTZ;
+
+    -- Sesiones
     CREATE TABLE IF NOT EXISTS sessions (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -63,7 +80,7 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Posts anónimos
+    -- Posts
     CREATE TABLE IF NOT EXISTS community_posts (
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -71,7 +88,11 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Campos opcionales de toxicidad en posts
+    -- Marca de patrocinio
+    ALTER TABLE community_posts
+      ADD COLUMN IF NOT EXISTS is_sponsored BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- Toxicidad posts
     ALTER TABLE community_posts
       ADD COLUMN IF NOT EXISTS toxicity_label TEXT;
     ALTER TABLE community_posts
@@ -79,7 +100,7 @@ async function ensureSchema() {
     ALTER TABLE community_posts
       ADD COLUMN IF NOT EXISTS flagged_toxic BOOLEAN NOT NULL DEFAULT FALSE;
 
-    -- Likes (un usuario solo puede likear una vez cada post)
+    -- Likes
     CREATE TABLE IF NOT EXISTS community_likes (
       id SERIAL PRIMARY KEY,
       post_id INTEGER NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
@@ -97,18 +118,49 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Campos opcionales de toxicidad en comentarios
+    -- Toxicidad comentarios
     ALTER TABLE community_comments
       ADD COLUMN IF NOT EXISTS toxicity_label TEXT;
     ALTER TABLE community_comments
       ADD COLUMN IF NOT EXISTS toxicity_score REAL;
     ALTER TABLE community_comments
       ADD COLUMN IF NOT EXISTS flagged_toxic BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- Registro local de suscripciones PayPal
+    CREATE TABLE IF NOT EXISTS paypal_subscriptions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      plan_key TEXT NOT NULL,
+      paypal_subscription_id TEXT UNIQUE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'CREATED',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `;
 
   try {
     await pool.query(sql);
-    console.log("[Calmward API] Esquema OK (users, sessions, comunidad).");
+
+    // Migración suave: si hay legacy subscription_valid_until,
+    // lo copiamos a las columnas nuevas solo si están vacías.
+    await pool.query(`
+      UPDATE users
+      SET
+        premium_valid_until = COALESCE(premium_valid_until, subscription_valid_until),
+        sponsor_valid_until = COALESCE(sponsor_valid_until, subscription_valid_until)
+      WHERE subscription_valid_until IS NOT NULL
+    `);
+
+    console.log("[Calmward API] Esquema OK (users, sessions, comunidad, billing).");
+
+    await pool.query(
+      `
+        UPDATE users
+        SET is_admin = TRUE
+        WHERE LOWER(email) = 'calmward.contact@gmail.com'
+      `
+    );
+    console.log("[Calmward API] Usuario calmward.contact@gmail.com marcado como admin (si existe).");
   } catch (err) {
     console.error("[Calmward API] Error creando esquema:", err);
   }
@@ -120,7 +172,8 @@ if (pool) {
   );
 }
 
-// Helpers para tokens
+// ===================== HELPERS GENERALES =====================
+
 function randomToken() {
   return (
     Math.random().toString(36).slice(2) +
@@ -137,59 +190,18 @@ function normalizeEmail(email) {
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-// IMPORTANTE: este modelo debe existir en Groq
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
-
-// Prompts con dos modos bien diferenciados
 
 const SYSTEM_LISTEN = `
 Eres Calmward, una IA de apoyo emocional centrada en ESCUCHAR y ACOMPAÑAR.
-
-Tu modo actual es: "solo escúchame".
-
-Estilo:
-- Hablas como una persona cercana, cálida y respetuosa.
-- Usas español sencillo, sin tecnicismos.
-- Te enfocas en validar las emociones, no en dar soluciones.
-- Puedes hacer alguna pregunta suave para entender mejor, pero sin interrogar.
-
-Límites:
-- No eres psicólogo, psiquiatra ni médico. No haces diagnósticos ni das consejos médicos.
-- No prometes resultados seguros ("todo va a salir bien").
-- No minimizas ("no es para tanto", "hay gente peor").
-
-Objetivo:
-- Que la persona sienta que alguien está con ella en lo que cuenta.
-- Devolverle sus emociones con otras palabras para que se sienta comprendida.
-- No des listas de tareas ni planes; solo acompañamiento y comprensión.
+Hablas en español cercano, validas emociones, sin dar diagnósticos.
 `;
 
 const SYSTEM_HELP = `
-Eres Calmward, una IA de apoyo emocional en modo "ayúdame a ordenar".
-
-Tu función aquí:
-- Ayudar a la persona a ENTENDER mejor lo que le pasa.
-- Separar problemas, ponerles nombre y proponer PASOS PEQUEÑOS y realistas.
-
-Estilo:
-- Hablas en español cercano y tranquilo.
-- Estructuras tus respuestas: primero demuestras que has entendido, luego ordenas, luego propones 1-2 acciones pequeñas.
-- Puedes usar viñetas o pasos numerados, pero sin soltar sermones.
-
-Límites:
-- No eres profesional sanitario, no haces diagnósticos ni recomendaciones médicas.
-- Si aparecen ideas de autolesión, suicidio o violencia, anima a buscar ayuda profesional o servicios de emergencia, pero sin dar instrucciones médicas.
-
-Muy importante:
-- Las acciones deben ser concretas y pequeñas, por ejemplo:
-  - "Escribir 3 frases sobre lo que sientes ahora mismo."
-  - "Mandar un mensaje a una persona de confianza."
-  - "Apuntar una sola cosa que quieras probar esta semana."
-
-- Evita frases hechas genéricas; responde siempre de forma específica a lo que la persona ha contado.
+Eres Calmward en modo "ayúdame a ordenar".
+Ordenas lo que la persona siente y propones 1-2 pasos pequeños y realistas.
 `;
 
-// Normaliza historial que pueda venir del cliente
 function normalizeHistory(history) {
   if (!Array.isArray(history)) return [];
   return history
@@ -200,9 +212,8 @@ function normalizeHistory(history) {
     .filter((m) => m.content.trim().length > 0);
 }
 
-// ===================== HELPERS SESIÓN + BAN (para Comunidad) =====================
+// ===================== HELPERS SESIÓN + BAN =====================
 
-// Buscar usuario por token de sesión
 async function getUserFromToken(token) {
   if (!pool || !token) return null;
 
@@ -213,7 +224,13 @@ async function getUserFromToken(token) {
         u.email,
         u.is_sponsor,
         u.is_banned,
-        u.community_banned
+        u.community_banned,
+        u.is_admin,
+        u.is_premium,
+        u.subscription_type,
+        u.subscription_valid_until,
+        u.premium_valid_until,
+        u.sponsor_valid_until
       FROM sessions s
       JOIN users u ON u.id = s.user_id
       WHERE s.token = $1
@@ -226,7 +243,6 @@ async function getUserFromToken(token) {
   return q.rows[0];
 }
 
-// Extraer token de Authorization o cabecera X-Session-Token
 function extractTokenFromRequest(req) {
   const auth = req.headers["authorization"];
   if (auth && typeof auth === "string" && auth.startsWith("Bearer ")) {
@@ -239,18 +255,15 @@ function extractTokenFromRequest(req) {
   return null;
 }
 
-// Forzar que haya user y que no esté baneado
 async function getUserFromRequestOrThrow(req, res) {
   if (!pool) {
-    res.status(500).json({
-      error: "No hay base de datos configurada en el servidor.",
-    });
+    res.status(500).json({ error: "No hay base de datos configurada." });
     return null;
   }
 
   const token = extractTokenFromRequest(req);
   if (!token) {
-    res.status(401).json({ error: "Debes iniciar sesión para usar la comunidad." });
+    res.status(401).json({ error: "Debes iniciar sesión." });
     return null;
   }
 
@@ -261,38 +274,24 @@ async function getUserFromRequestOrThrow(req, res) {
       return null;
     }
 
-    // Ban global (para un bloqueo más serio si lo usas algún día)
     if (user.is_banned) {
       res.status(403).json({
-        error:
-          "Tu cuenta ha sido bloqueada. Si crees que es un error, contacta con el soporte de Calmward.",
-      });
-      return null;
-    }
-
-    // Ban específico SOLO para la zona Comunidad
-    if (user.community_banned) {
-      res.status(403).json({
-        error:
-          "Tu cuenta ha sido bloqueada para la zona Comunidad por incumplir las normas.",
+        error: "Tu cuenta ha sido bloqueada.",
       });
       return null;
     }
 
     return { user, token };
   } catch (err) {
-    console.error("[Comunidad] Error en getUserFromRequestOrThrow:", err);
-    res.status(500).json({ error: "Error interno validando la sesión." });
+    console.error("[Auth] Error:", err);
+    res.status(500).json({ error: "Error interno validando sesión." });
     return null;
   }
 }
 
-// Filtro básico anti-contenido tóxico
 function isToxicContent(text) {
   if (!text) return false;
   const lower = text.toLowerCase();
-
-  // Lista básica, se puede ampliar cuando quieras
   const badFragments = [
     "mierda",
     "puta",
@@ -305,36 +304,39 @@ function isToxicContent(text) {
     "abusar de ti",
     "te manipulo",
   ];
-
   return badFragments.some((bad) => lower.includes(bad));
 }
 
-// Banear usuario para Comunidad y cerrar todas sus sesiones
 async function blockUserAndKillSessions(userId) {
   if (!pool || !userId) return;
 
-  // Ban SOLO para Comunidad
   await pool.query(
-    `
-      UPDATE users
-      SET community_banned = TRUE
-      WHERE id = $1
-    `,
+    `UPDATE users SET community_banned = TRUE WHERE id = $1`,
     [userId]
   );
-
-  // Cerramos todas sus sesiones para que tenga que volver a iniciar
-  await pool.query(
-    `
-      DELETE FROM sessions
-      WHERE user_id = $1
-    `,
-    [userId]
-  );
+  await pool.query(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
 
   console.log(
-    `[Comunidad] Usuario ${userId} bloqueado para la Comunidad y sesiones cerradas.`
+    `[Comunidad] Usuario ${userId} bloqueado para Comunidad y sesiones cerradas.`
   );
+}
+
+// ===================== HELPERS DE SUSCRIPCIÓN =====================
+
+function isPremiumActive(user) {
+  if (!user || !user.is_premium) return false;
+  const src = user.premium_valid_until || user.subscription_valid_until;
+  if (!src) return true;
+  const until = new Date(src).getTime();
+  return Number.isFinite(until) && until > Date.now();
+}
+
+function isSponsorActive(user) {
+  if (!user || !user.is_sponsor) return false;
+  const src = user.sponsor_valid_until || user.subscription_valid_until;
+  if (!src) return true;
+  const until = new Date(src).getTime();
+  return Number.isFinite(until) && until > Date.now();
 }
 
 // ===================== RUTA DE SALUD =====================
@@ -361,16 +363,13 @@ app.get("/", async (_req, res) => {
   });
 });
 
-// ===================== AUTH: REGISTER + LOGIN =====================
+// ===================== AUTH =====================
 
-// POST /auth/register-and-login
-// Crea usuario (si no existe) o hace login si ya existe
 app.post("/auth/register-and-login", async (req, res) => {
   try {
     if (!pool || !DATABASE_URL) {
       return res.status(500).json({
-        error:
-          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
+        error: "No hay base de datos configurada. Falta DATABASE_URL.",
       });
     }
 
@@ -382,7 +381,6 @@ app.post("/auth/register-and-login", async (req, res) => {
       return res.status(400).json({ error: "Correo no válido." });
     }
 
-    // Reglas de contraseña: mínimo 10 y al menos 1 mayúscula
     if (plainPass.length < 10) {
       return res.status(400).json({
         error: "La contraseña debe tener al menos 10 caracteres.",
@@ -390,34 +388,41 @@ app.post("/auth/register-and-login", async (req, res) => {
     }
     if (!/[A-ZÁÉÍÓÚÑ]/.test(plainPass)) {
       return res.status(400).json({
-        error: "La contraseña debe incluir al menos una letra mayúscula.",
+        error: "La contraseña debe incluir al menos una mayúscula.",
       });
     }
 
     const existing = await pool.query(
-      "SELECT id, email, password_hash, is_sponsor FROM users WHERE email = $1",
+      `
+        SELECT
+          id, email, password_hash,
+          is_sponsor, is_banned, community_banned, is_admin,
+          is_premium, subscription_type,
+          subscription_valid_until, premium_valid_until, sponsor_valid_until
+        FROM users
+        WHERE email = $1
+      `,
       [normEmail]
     );
 
     let userRow;
 
     if (existing.rows.length > 0) {
-      // Ya existe: intentar login
       userRow = existing.rows[0];
       const ok = await bcrypt.compare(plainPass, userRow.password_hash);
       if (!ok) {
-        return res
-          .status(401)
-          .json({ error: "Correo o contraseña incorrectos." });
+        return res.status(401).json({ error: "Correo o contraseña incorrectos." });
       }
     } else {
-      // No existe: crear usuario
       const hash = await bcrypt.hash(plainPass, 10);
       const inserted = await pool.query(
         `
           INSERT INTO users (email, password_hash)
           VALUES ($1, $2)
-          RETURNING id, email, is_sponsor
+          RETURNING
+            id, email, is_sponsor, is_banned, community_banned, is_admin,
+            is_premium, subscription_type,
+            subscription_valid_until, premium_valid_until, sponsor_valid_until
         `,
         [normEmail, hash]
       );
@@ -434,24 +439,26 @@ app.post("/auth/register-and-login", async (req, res) => {
       token,
       email: userRow.email,
       isSponsor: !!userRow.is_sponsor,
+      isSponsorActive: isSponsorActive(userRow),
+      isAdmin: !!userRow.is_admin,
+      isPremium: !!userRow.is_premium,
+      isPremiumActive: isPremiumActive(userRow),
+      subscriptionType: userRow.subscription_type || null,
+      subscriptionValidUntil: userRow.subscription_valid_until || null,
+      premiumValidUntil: userRow.premium_valid_until || null,
+      sponsorValidUntil: userRow.sponsor_valid_until || null,
     });
   } catch (err) {
     console.error("Error en /auth/register-and-login:", err);
-    return res.status(500).json({
-      error:
-        "Ha habido un problema al crear o iniciar sesión. Inténtalo de nuevo en unos segundos.",
-    });
+    return res.status(500).json({ error: "Problema al crear o iniciar sesión." });
   }
 });
 
-// POST /auth/login
-// Login normal con email + password
 app.post("/auth/login", async (req, res) => {
   try {
     if (!pool || !DATABASE_URL) {
       return res.status(500).json({
-        error:
-          "No hay base de datos configurada en el servidor. Falta DATABASE_URL.",
+        error: "No hay base de datos configurada. Falta DATABASE_URL.",
       });
     }
 
@@ -460,38 +467,35 @@ app.post("/auth/login", async (req, res) => {
     const plainPass = String(password || "");
 
     if (!normEmail || !normEmail.includes("@") || !plainPass) {
-      return res
-        .status(400)
-        .json({ error: "Debes indicar correo y contraseña." });
+      return res.status(400).json({ error: "Debes indicar correo y contraseña." });
     }
 
     const q = await pool.query(
-      "SELECT id, email, password_hash, is_sponsor, is_banned, community_banned FROM users WHERE email = $1",
+      `
+        SELECT
+          id, email, password_hash,
+          is_sponsor, is_banned, community_banned, is_admin,
+          is_premium, subscription_type,
+          subscription_valid_until, premium_valid_until, sponsor_valid_until
+        FROM users
+        WHERE email = $1
+      `,
       [normEmail]
     );
 
     if (q.rows.length === 0) {
-      return res
-        .status(401)
-        .json({ error: "No existe ninguna cuenta con ese correo." });
+      return res.status(401).json({ error: "No existe ninguna cuenta con ese correo." });
     }
 
     const userRow = q.rows[0];
 
     if (userRow.is_banned) {
-      return res.status(403).json({
-        error:
-          "Tu cuenta ha sido bloqueada. Si crees que es un error, contacta con el soporte de Calmward.",
-      });
+      return res.status(403).json({ error: "Tu cuenta ha sido bloqueada." });
     }
 
-    // OJO: si está baneado solo de Comunidad, sí permitimos login.
-    // El bloqueo se hace al usar las rutas de Comunidad.
     const ok = await bcrypt.compare(plainPass, userRow.password_hash);
     if (!ok) {
-      return res
-        .status(401)
-        .json({ error: "Correo o contraseña incorrectos." });
+      return res.status(401).json({ error: "Correo o contraseña incorrectos." });
     }
 
     const token = randomToken();
@@ -504,55 +508,63 @@ app.post("/auth/login", async (req, res) => {
       token,
       email: userRow.email,
       isSponsor: !!userRow.is_sponsor,
+      isSponsorActive: isSponsorActive(userRow),
+      isAdmin: !!userRow.is_admin,
+      isPremium: !!userRow.is_premium,
+      isPremiumActive: isPremiumActive(userRow),
+      subscriptionType: userRow.subscription_type || null,
+      subscriptionValidUntil: userRow.subscription_valid_until || null,
+      premiumValidUntil: userRow.premium_valid_until || null,
+      sponsorValidUntil: userRow.sponsor_valid_until || null,
     });
   } catch (err) {
     console.error("Error en /auth/login:", err);
-    return res.status(500).json({
-      error:
-        "Ha habido un problema al iniciar sesión. Inténtalo de nuevo en unos segundos.",
-    });
+    return res.status(500).json({ error: "Problema al iniciar sesión." });
   }
 });
 
-// ===================== COMUNIDAD ANÓNIMA =====================
+// ===================== COMUNIDAD =====================
 
-// Crear post anónimo (requiere sesión; si es tóxico, ban y fuera)
 app.post("/community/posts", async (req, res) => {
   try {
     const auth = await getUserFromRequestOrThrow(req, res);
     if (!auth) return;
     const { user } = auth;
 
-    if (!pool) {
-      return res.status(500).json({
-        error: "No hay base de datos configurada.",
+    if (user.community_banned) {
+      return res.status(403).json({
+        error: "Tu cuenta ha sido bloqueada para la zona Comunidad.",
       });
     }
 
-    let { text } = req.body || {};
+    let { text, sponsored } = req.body || {};
     text = typeof text === "string" ? text.trim() : "";
+    sponsored = !!sponsored;
 
     if (!text || text.length < 3) {
-      return res
-        .status(400)
-        .json({ error: "El post es demasiado corto. Escribe un poco más." });
+      return res.status(400).json({ error: "El post es demasiado corto." });
+    }
+
+    if (sponsored && !isSponsorActive(user)) {
+      return res.status(403).json({
+        error: "Este tipo de publicación requiere Calmward Sponsor.",
+      });
     }
 
     if (isToxicContent(text)) {
       await blockUserAndKillSessions(user.id);
       return res.status(403).json({
-        error:
-          "Tu cuenta ha sido bloqueada para la zona Comunidad por incumplir las normas.",
+        error: "Tu cuenta ha sido bloqueada para la zona Comunidad por normas.",
       });
     }
 
     const insert = await pool.query(
       `
-        INSERT INTO community_posts (user_id, body)
-        VALUES ($1, $2)
-        RETURNING id, body, created_at
+        INSERT INTO community_posts (user_id, body, is_sponsored)
+        VALUES ($1, $2, $3)
+        RETURNING id, body, created_at, is_sponsored
       `,
-      [user.id, text]
+      [user.id, text, sponsored]
     );
 
     const row = insert.rows[0];
@@ -563,27 +575,19 @@ app.post("/community/posts", async (req, res) => {
         id: row.id,
         body: row.body,
         createdAt: row.created_at,
+        isSponsored: !!row.is_sponsored,
         likeCount: 0,
         commentCount: 0,
       },
     });
   } catch (err) {
     console.error("Error en POST /community/posts:", err);
-    return res
-      .status(500)
-      .json({ error: "Error interno al crear el post anónimo." });
+    return res.status(500).json({ error: "Error interno al crear el post." });
   }
 });
 
-// Listar posts recientes
 app.get("/community/posts", async (_req, res) => {
   try {
-    if (!pool) {
-      return res.status(500).json({
-        error: "No hay base de datos configurada.",
-      });
-    }
-
     const limit = 50;
 
     const result = await pool.query(
@@ -591,8 +595,9 @@ app.get("/community/posts", async (_req, res) => {
         SELECT p.id,
                p.body,
                p.created_at,
-               COALESCE(l.cnt, 0)  AS like_count,
-               COALESCE(c.cnt, 0)  AS comment_count
+               p.is_sponsored,
+               COALESCE(l.cnt, 0) AS like_count,
+               COALESCE(c.cnt, 0) AS comment_count
         FROM community_posts p
         LEFT JOIN (
           SELECT post_id, COUNT(*)::int AS cnt
@@ -614,6 +619,7 @@ app.get("/community/posts", async (_req, res) => {
       id: row.id,
       body: row.body,
       createdAt: row.created_at,
+      isSponsored: !!row.is_sponsored,
       likeCount: row.like_count,
       commentCount: row.comment_count,
     }));
@@ -621,23 +627,18 @@ app.get("/community/posts", async (_req, res) => {
     return res.json({ ok: true, posts });
   } catch (err) {
     console.error("Error en GET /community/posts:", err);
-    return res
-      .status(500)
-      .json({ error: "Error interno al listar los posts." });
+    return res.status(500).json({ error: "Error interno al listar posts." });
   }
 });
 
-// Like / unlike de un post (requiere sesión)
 app.post("/community/posts/:id/like", async (req, res) => {
   try {
     const auth = await getUserFromRequestOrThrow(req, res);
     if (!auth) return;
     const { user } = auth;
 
-    if (!pool) {
-      return res.status(500).json({
-        error: "No hay base de datos configurada.",
-      });
+    if (user.community_banned) {
+      return res.status(403).json({ error: "Tu cuenta está bloqueada en Comunidad." });
     }
 
     const postId = parseInt(req.params.id, 10);
@@ -646,11 +647,7 @@ app.post("/community/posts/:id/like", async (req, res) => {
     }
 
     const existingLike = await pool.query(
-      `
-        SELECT id
-        FROM community_likes
-        WHERE post_id = $1 AND user_id = $2
-      `,
+      `SELECT id FROM community_likes WHERE post_id = $1 AND user_id = $2`,
       [postId, user.id]
     );
 
@@ -663,50 +660,32 @@ app.post("/community/posts/:id/like", async (req, res) => {
       liked = false;
     } else {
       await pool.query(
-        `
-          INSERT INTO community_likes (post_id, user_id)
-          VALUES ($1, $2)
-        `,
+        `INSERT INTO community_likes (post_id, user_id) VALUES ($1, $2)`,
         [postId, user.id]
       );
       liked = true;
     }
 
     const countRes = await pool.query(
-      `
-        SELECT COUNT(*)::int AS c
-        FROM community_likes
-        WHERE post_id = $1
-      `,
+      `SELECT COUNT(*)::int AS c FROM community_likes WHERE post_id = $1`,
       [postId]
     );
 
-    const likeCount = countRes.rows[0]?.c ?? 0;
-
-    return res.json({
-      ok: true,
-      liked,
-      likeCount,
-    });
+    return res.json({ ok: true, liked, likeCount: countRes.rows[0]?.c ?? 0 });
   } catch (err) {
-    console.error("Error en POST /community/posts/:id/like:", err);
-    return res
-      .status(500)
-      .json({ error: "Error interno al registrar el like." });
+    console.error("Error en like:", err);
+    return res.status(500).json({ error: "Error interno al registrar like." });
   }
 });
 
-// Crear comentario (requiere sesión)
 app.post("/community/posts/:id/comments", async (req, res) => {
   try {
     const auth = await getUserFromRequestOrThrow(req, res);
     if (!auth) return;
     const { user } = auth;
 
-    if (!pool) {
-      return res.status(500).json({
-        error: "No hay base de datos configurada.",
-      });
+    if (user.community_banned) {
+      return res.status(403).json({ error: "Tu cuenta está bloqueada en Comunidad." });
     }
 
     const postId = parseInt(req.params.id, 10);
@@ -718,16 +697,13 @@ app.post("/community/posts/:id/comments", async (req, res) => {
     text = typeof text === "string" ? text.trim() : "";
 
     if (!text || text.length < 2) {
-      return res
-        .status(400)
-        .json({ error: "El comentario es demasiado corto." });
+      return res.status(400).json({ error: "El comentario es demasiado corto." });
     }
 
     if (isToxicContent(text)) {
       await blockUserAndKillSessions(user.id);
       return res.status(403).json({
-        error:
-          "Tu cuenta ha sido bloqueada para la zona Comunidad por incumplir las normas.",
+        error: "Tu cuenta ha sido bloqueada para Comunidad por normas.",
       });
     }
 
@@ -744,30 +720,16 @@ app.post("/community/posts/:id/comments", async (req, res) => {
 
     return res.json({
       ok: true,
-      comment: {
-        id: row.id,
-        postId,
-        body: row.body,
-        createdAt: row.created_at,
-      },
+      comment: { id: row.id, postId, body: row.body, createdAt: row.created_at },
     });
   } catch (err) {
-    console.error("Error en POST /community/posts/:id/comments:", err);
-    return res
-      .status(500)
-      .json({ error: "Error interno al crear el comentario." });
+    console.error("Error en comment:", err);
+    return res.status(500).json({ error: "Error interno al comentar." });
   }
 });
 
-// Listar comentarios de un post
 app.get("/community/posts/:id/comments", async (req, res) => {
   try {
-    if (!pool) {
-      return res.status(500).json({
-        error: "No hay base de datos configurada.",
-      });
-    }
-
     const postId = parseInt(req.params.id, 10);
     if (!postId || Number.isNaN(postId)) {
       return res.status(400).json({ error: "ID de post inválido." });
@@ -791,28 +753,35 @@ app.get("/community/posts/:id/comments", async (req, res) => {
 
     return res.json({ ok: true, comments });
   } catch (err) {
-    console.error("Error en GET /community/posts/:id/comments:", err);
-    return res
-      .status(500)
-      .json({ error: "Error interno al listar comentarios." });
+    console.error("Error listando comments:", err);
+    return res.status(500).json({ error: "Error interno al listar comentarios." });
   }
 });
 
-// ===================== IA: POST /ai/talk =====================
+// ===================== IA =====================
 
 app.post("/ai/talk", async (req, res) => {
   try {
     if (!GROQ_API_KEY) {
-      console.error("Falta GROQ_API_KEY en el servidor");
       return res.status(500).json({
         error: "Falta GROQ_API_KEY en el servidor. Configúrala en Render.",
       });
     }
 
     const { message, mode = "solo_escuchame", history = [] } = req.body || {};
-
     if (!message || typeof message !== "string") {
-      return res.status(400).json({ error: "Falta 'message' en el cuerpo." });
+      return res.status(400).json({ error: "Falta 'message'." });
+    }
+
+    if (mode === "ayudame_a_ordenar") {
+      const auth = await getUserFromRequestOrThrow(req, res);
+      if (!auth) return;
+
+      if (!isPremiumActive(auth.user)) {
+        return res.status(403).json({
+          error: "Esta función requiere Calmward Premium.",
+        });
+      }
     }
 
     const systemPrompt =
@@ -826,11 +795,7 @@ app.post("/ai/talk", async (req, res) => {
       { role: "user", content: message },
     ];
 
-    const payload = {
-      model: GROQ_MODEL,
-      messages,
-      temperature: 0.7,
-    };
+    const payload = { model: GROQ_MODEL, messages, temperature: 0.7 };
 
     const groqRes = await fetch(GROQ_API_URL, {
       method: "POST",
@@ -851,7 +816,6 @@ app.post("/ai/talk", async (req, res) => {
     }
 
     const data = await groqRes.json().catch(() => ({}));
-
     const replyText =
       data?.choices?.[0]?.message?.content ??
       "No he podido generar una respuesta ahora mismo.";
@@ -859,37 +823,49 @@ app.post("/ai/talk", async (req, res) => {
     return res.json({ reply: replyText });
   } catch (err) {
     console.error("Error en /ai/talk:", err);
-    return res.status(500).json({
-      error:
-        "Ha habido un problema al hablar con el modelo. Inténtalo de nuevo en unos segundos.",
-    });
+    return res.status(500).json({ error: "Problema al hablar con el modelo." });
   }
 });
 
 /* ================= ADMIN PANEL ================= */
 
-function isAdminUser(user) {
-  return user?.email === "calmward.contact@gmail.com";
+function isAdminUser(u) {
+  if (!u) return false;
+  if (u.is_admin) return true;
+  const email = String(u.email || "").trim().toLowerCase();
+  return email === "calmward.contact@gmail.com";
 }
 
-// Obtener todos los usuarios
 app.get("/admin/users", async (req, res) => {
-  const user = await getUserFromRequestOrThrow(req, res);
-  if (!user || !isAdminUser(user)) return;
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
 
   const q = await pool.query(
-    "SELECT id, email, is_banned, community_banned, is_admin, is_sponsor, created_at FROM users ORDER BY id DESC"
+    `
+      SELECT
+        id, email,
+        is_banned, community_banned, is_admin,
+        is_sponsor, is_premium,
+        subscription_type,
+        subscription_valid_until,
+        premium_valid_until,
+        sponsor_valid_until,
+        created_at
+      FROM users
+      ORDER BY id DESC
+    `
   );
   res.json({ users: q.rows });
 });
 
-// Obtener posts de comunidad
 app.get("/admin/posts", async (req, res) => {
-  const user = await getUserFromRequestOrThrow(req, res);
-  if (!user || !isAdminUser(user)) return;
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
 
   const q = await pool.query(
-    `SELECT p.id, p.body, p.created_at, p.flagged_toxic, p.user_id, u.email
+    `SELECT p.id, p.body, p.created_at, p.flagged_toxic, p.is_sponsored, p.user_id, u.email
      FROM community_posts p
      LEFT JOIN users u ON u.id = p.user_id
      ORDER BY p.created_at DESC`
@@ -897,50 +873,509 @@ app.get("/admin/posts", async (req, res) => {
   res.json({ posts: q.rows });
 });
 
-// Banear usuario manualmente
 app.post("/admin/ban/:id", async (req, res) => {
-  const user = await getUserFromRequestOrThrow(req, res);
-  if (!user || !isAdminUser(user)) return;
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
 
-  const id = req.params.id;
-  await pool.query(
-    "UPDATE users SET community_banned = TRUE WHERE id = $1",
-    [id]
-  );
+  await pool.query("UPDATE users SET community_banned = TRUE WHERE id = $1", [
+    req.params.id,
+  ]);
   res.json({ ok: true });
 });
 
-// Desbanear usuario
 app.post("/admin/unban/:id", async (req, res) => {
-  const user = await getUserFromRequestOrThrow(req, res);
-  if (!user || !isAdminUser(user)) return;
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
 
-  const id = req.params.id;
-  await pool.query(
-    "UPDATE users SET community_banned = FALSE WHERE id = $1",
-    [id]
-  );
+  await pool.query("UPDATE users SET community_banned = FALSE WHERE id = $1", [
+    req.params.id,
+  ]);
   res.json({ ok: true });
 });
 
-// Borrar post
 app.delete("/admin/posts/:id", async (req, res) => {
-  const user = await getUserFromRequestOrThrow(req, res);
-  if (!user || !isAdminUser(user)) return;
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
 
-  const id = req.params.id;
-  await pool.query("DELETE FROM community_posts WHERE id = $1", [id]);
+  await pool.query("DELETE FROM community_posts WHERE id = $1", [req.params.id]);
   res.json({ ok: true });
 });
 
-// ===================== ARRANQUE SERVIDOR =====================
+/* ================= BILLING / PAYPAL (SUBSCRIPTIONS + WEBHOOK) ================= */
+
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
+const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "";
+const PAYPAL_ENV = (process.env.PAYPAL_ENV || "live").toLowerCase();
+
+const PAYPAL_API_BASE =
+  PAYPAL_ENV === "live"
+    ? "https://api-m.paypal.com"
+    : "https://api-m.sandbox.paypal.com";
+
+const PAYPAL_WEBHOOK_ID =
+  process.env.PAYPAL_WEBHOOK_ID || "7LE24430DE7608012";
+
+const PAYPAL_RETURN_URL =
+  process.env.PAYPAL_RETURN_URL || "https://example.com/paypal-success";
+const PAYPAL_CANCEL_URL =
+  process.env.PAYPAL_CANCEL_URL || "https://example.com/paypal-cancel";
+
+const PLAN_CATALOG = {
+  sponsor_monthly: { price: "3.99", label: "Patrocinio Calmward (mensual)" },
+  sponsor_yearly: { price: "39.00", label: "Patrocinio Calmward (anual)" },
+  premium_monthly: { price: "1.99", label: "Calmward Premium (mensual)" },
+  premium_yearly: { price: "19.00", label: "Calmward Premium (anual)" },
+};
+
+const PLAN_ID_MAP = {
+  sponsor_monthly:
+    process.env.PAYPAL_PLAN_SPONSOR_MONTHLY ||
+    process.env.PAYPAL_PLAN_SPONSOR_MENSUAL ||
+    "",
+  sponsor_yearly:
+    process.env.PAYPAL_PLAN_SPONSOR_YEARLY ||
+    process.env.PAYPAL_PLAN_SPONSOR_ANNUAL ||
+    "",
+  premium_monthly:
+    process.env.PAYPAL_PLAN_PREMIUM_MONTHLY ||
+    process.env.PAYPAL_PLAN_PREMIUM_MENSUAL ||
+    "",
+  premium_yearly:
+    process.env.PAYPAL_PLAN_PREMIUM_YEARLY ||
+    process.env.PAYPAL_PLAN_PREMIUM_ANNUAL ||
+    "",
+};
+
+async function getPayPalAccessToken() {
+  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) {
+    throw new Error("PayPal no está configurado.");
+  }
+
+  const basic = Buffer.from(
+    PAYPAL_CLIENT_ID + ":" + PAYPAL_CLIENT_SECRET
+  ).toString("base64");
+
+  const res = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("Error token PayPal:", res.status, text);
+    throw new Error("No se pudo obtener token de PayPal.");
+  }
+
+  const data = await res.json();
+  return data.access_token;
+}
+
+function computeValidUntil(planKey) {
+  const now = new Date();
+  const d = new Date(now.getTime());
+
+  if (String(planKey).endsWith("_monthly")) {
+    d.setMonth(d.getMonth() + 1);
+  } else if (String(planKey).endsWith("_yearly")) {
+    d.setFullYear(d.getFullYear() + 1);
+  } else {
+    d.setMonth(d.getMonth() + 1);
+  }
+
+  return d;
+}
+
+app.get("/billing/plans", async (_req, res) => {
+  const plans = Object.keys(PLAN_CATALOG).map((k) => ({
+    planKey: k,
+    label: PLAN_CATALOG[k].label,
+    price: PLAN_CATALOG[k].price,
+    hasPlanId: !!PLAN_ID_MAP[k],
+  }));
+
+  res.json({ ok: true, env: PAYPAL_ENV, plans });
+});
+
+app.post("/billing/paypal/create-subscription", async (req, res) => {
+  try {
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+
+    const { planKey } = req.body || {};
+    const key = String(planKey || "").trim();
+
+    if (!key || !PLAN_CATALOG[key]) {
+      return res.status(400).json({
+        error:
+          "Plan inválido. Usa sponsor_monthly, sponsor_yearly, premium_monthly o premium_yearly.",
+      });
+    }
+
+    const planId = PLAN_ID_MAP[key];
+    if (!planId) {
+      return res.status(500).json({
+        error: "Falta plan_id en el servidor. Revisa PAYPAL_PLAN_* en Render.",
+      });
+    }
+
+    const accessToken = await getPayPalAccessToken();
+
+    const body = {
+      plan_id: planId,
+      custom_id: key,
+      application_context: {
+        brand_name: "Calmward",
+        user_action: "SUBSCRIBE_NOW",
+        return_url: PAYPAL_RETURN_URL,
+        cancel_url: PAYPAL_CANCEL_URL,
+      },
+    };
+
+    const subRes = await fetch(`${PAYPAL_API_BASE}/v1/billing/subscriptions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!subRes.ok) {
+      const text = await subRes.text().catch(() => "");
+      console.error("Error creando Subscription:", subRes.status, text);
+      return res.status(500).json({
+        error: "No se ha podido crear la suscripción en PayPal.",
+      });
+    }
+
+    const subData = await subRes.json().catch(() => ({}));
+    const approveLink =
+      (subData.links || []).find((l) => l.rel === "approve") || null;
+
+    if (pool && subData.id) {
+      await pool.query(
+        `
+          INSERT INTO paypal_subscriptions (user_id, plan_key, paypal_subscription_id, status)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (paypal_subscription_id) DO NOTHING
+        `,
+        [auth.user.id, key, subData.id, subData.status || "CREATED"]
+      );
+    }
+
+    return res.json({
+      ok: true,
+      subscriptionId: subData.id || null,
+      status: subData.status || null,
+      approveUrl: approveLink ? approveLink.href : null,
+      planKey: key,
+      label: PLAN_CATALOG[key].label,
+      price: PLAN_CATALOG[key].price,
+    });
+  } catch (err) {
+    console.error("Error en create-subscription:", err);
+    return res.status(500).json({
+      error: "No se ha podido iniciar la suscripción con PayPal.",
+    });
+  }
+});
+
+app.post("/billing/paypal/confirm-subscription", async (req, res) => {
+  try {
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+
+    const { subscriptionId, planKey } = req.body || {};
+    const subId = String(subscriptionId || "").trim();
+    const key = String(planKey || "").trim();
+
+    if (!subId || !key || !PLAN_CATALOG[key]) {
+      return res.status(400).json({
+        error: "Datos inválidos. Falta subscriptionId o planKey.",
+      });
+    }
+
+    const accessToken = await getPayPalAccessToken();
+
+    const getRes = await fetch(
+      `${PAYPAL_API_BASE}/v1/billing/subscriptions/${subId}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!getRes.ok) {
+      const text = await getRes.text().catch(() => "");
+      console.error("Error leyendo Subscription:", getRes.status, text);
+      return res.status(500).json({
+        error: "No se pudo verificar la suscripción en PayPal.",
+      });
+    }
+
+    const subData = await getRes.json().catch(() => ({}));
+    const status = String(subData.status || "");
+
+    if (pool) {
+      await pool.query(
+        `
+          UPDATE paypal_subscriptions
+          SET status = $1, updated_at = NOW()
+          WHERE paypal_subscription_id = $2
+        `,
+        [status || "PENDING", subId]
+      );
+    }
+
+    if (status !== "ACTIVE") {
+      return res.status(400).json({
+        error: "La suscripción aún no está activa en PayPal.",
+        status,
+      });
+    }
+
+    const validUntil = computeValidUntil(key);
+    const isSponsor = key.startsWith("sponsor_");
+    const isPremium = key.startsWith("premium_");
+
+    // Actualiza flags + última compra
+    // y SOLO la fecha específica del rol
+    await pool.query(
+      `
+        UPDATE users
+        SET
+          is_sponsor = CASE WHEN $2 THEN TRUE ELSE is_sponsor END,
+          is_premium = CASE WHEN $3 THEN TRUE ELSE is_premium END,
+          subscription_type = $4,
+          premium_valid_until = CASE WHEN $3 THEN $5 ELSE premium_valid_until END,
+          sponsor_valid_until = CASE WHEN $2 THEN $5 ELSE sponsor_valid_until END
+        WHERE id = $1
+      `,
+      [auth.user.id, isSponsor, isPremium, key, validUntil.toISOString()]
+    );
+
+    return res.json({
+      ok: true,
+      planKey: key,
+      label: PLAN_CATALOG[key].label,
+      price: PLAN_CATALOG[key].price,
+      paypalStatus: status,
+      validUntil: validUntil.toISOString(),
+      isSponsor,
+      isPremium,
+    });
+  } catch (err) {
+    console.error("Error en confirm-subscription:", err);
+    return res.status(500).json({
+      error: "No se ha podido confirmar la suscripción.",
+    });
+  }
+});
+
+app.get("/billing/subscription", async (req, res) => {
+  try {
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+    const u = auth.user;
+
+    return res.json({
+      ok: true,
+      email: u.email,
+      isSponsor: !!u.is_sponsor,
+      isSponsorActive: isSponsorActive(u),
+      isPremium: !!u.is_premium,
+      isPremiumActive: isPremiumActive(u),
+      subscriptionType: u.subscription_type || null,
+      premiumValidUntil: u.premium_valid_until || null,
+      sponsorValidUntil: u.sponsor_valid_until || null,
+    });
+  } catch (err) {
+    console.error("Error en /billing/subscription:", err);
+    return res.status(500).json({
+      error: "No se pudo cargar la información de suscripción.",
+    });
+  }
+});
+
+// ===================== WEBHOOK PAYPAL =====================
+
+async function verifyPayPalWebhookSignature(req) {
+  if (!PAYPAL_WEBHOOK_ID) {
+    console.warn("[PayPal Webhook] Falta PAYPAL_WEBHOOK_ID.");
+    return false;
+  }
+
+  const transmissionId = req.headers["paypal-transmission-id"];
+  const transmissionTime = req.headers["paypal-transmission-time"];
+  const certUrl = req.headers["paypal-cert-url"];
+  const authAlgo = req.headers["paypal-auth-algo"];
+  const transmissionSig = req.headers["paypal-transmission-sig"];
+
+  if (
+    !transmissionId ||
+    !transmissionTime ||
+    !certUrl ||
+    !authAlgo ||
+    !transmissionSig
+  ) {
+    console.warn("[PayPal Webhook] Faltan headers de verificación.");
+    return false;
+  }
+
+  const accessToken = await getPayPalAccessToken();
+
+  const body = {
+    transmission_id: transmissionId,
+    transmission_time: transmissionTime,
+    cert_url: certUrl,
+    auth_algo: authAlgo,
+    transmission_sig: transmissionSig,
+    webhook_id: PAYPAL_WEBHOOK_ID,
+    webhook_event: req.body,
+  };
+
+  const res = await fetch(
+    `${PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("[PayPal Webhook] Error verificando firma:", res.status, text);
+    return false;
+  }
+
+  const data = await res.json().catch(() => ({}));
+  return data.verification_status === "SUCCESS";
+}
+
+app.post("/webhooks/paypal", async (req, res) => {
+  try {
+    if (!pool) return res.status(200).json({ ok: true, ignored: "no_db" });
+
+    const ok = await verifyPayPalWebhookSignature(req);
+    if (!ok) {
+      return res.status(400).json({ ok: false, error: "Invalid signature" });
+    }
+
+    const event = req.body || {};
+    const type = String(event.event_type || "");
+    const resource = event.resource || {};
+
+    const subscriptionId = String(resource.id || "").trim();
+    if (!subscriptionId) {
+      return res.status(200).json({ ok: true, ignored: "no_subscription_id" });
+    }
+
+    const subQ = await pool.query(
+      `
+        SELECT user_id, plan_key
+        FROM paypal_subscriptions
+        WHERE paypal_subscription_id = $1
+        LIMIT 1
+      `,
+      [subscriptionId]
+    );
+
+    if (subQ.rows.length === 0) {
+      await pool.query(
+        `
+          INSERT INTO paypal_subscriptions (user_id, plan_key, paypal_subscription_id, status)
+          VALUES (NULL, 'unknown', $1, $2)
+          ON CONFLICT (paypal_subscription_id) DO UPDATE
+          SET status = EXCLUDED.status, updated_at = NOW()
+        `,
+        [subscriptionId, type || "UNKNOWN"]
+      );
+      return res.status(200).json({ ok: true, noted: "unknown_local_sub" });
+    }
+
+    const { user_id, plan_key } = subQ.rows[0];
+    const key = String(plan_key || "").trim();
+
+    await pool.query(
+      `
+        UPDATE paypal_subscriptions
+        SET status = $1, updated_at = NOW()
+        WHERE paypal_subscription_id = $2
+      `,
+      [type || "UPDATED", subscriptionId]
+    );
+
+    if (!key || key === "unknown" || !user_id) {
+      return res.status(200).json({ ok: true, updated: "status_only" });
+    }
+
+    const isSponsor = key.startsWith("sponsor_");
+    const isPremium = key.startsWith("premium_");
+
+    if (
+      type === "BILLING.SUBSCRIPTION.ACTIVATED" ||
+      type === "BILLING.SUBSCRIPTION.RENEWED" ||
+      type === "BILLING.SUBSCRIPTION.UPDATED"
+    ) {
+      const validUntil = computeValidUntil(key);
+
+      await pool.query(
+        `
+          UPDATE users
+          SET
+            is_sponsor = CASE WHEN $2 THEN TRUE ELSE is_sponsor END,
+            is_premium = CASE WHEN $3 THEN TRUE ELSE is_premium END,
+            subscription_type = $4,
+            premium_valid_until = CASE WHEN $3 THEN $5 ELSE premium_valid_until END,
+            sponsor_valid_until = CASE WHEN $2 THEN $5 ELSE sponsor_valid_until END
+          WHERE id = $1
+        `,
+        [user_id, isSponsor, isPremium, key, validUntil.toISOString()]
+      );
+
+      return res.status(200).json({ ok: true, applied: "activated/renewed" });
+    }
+
+    if (
+      type === "BILLING.SUBSCRIPTION.CANCELLED" ||
+      type === "BILLING.SUBSCRIPTION.SUSPENDED" ||
+      type === "BILLING.SUBSCRIPTION.EXPIRED"
+    ) {
+      return res.status(200).json({ ok: true, applied: "stopped_status_only" });
+    }
+
+    return res.status(200).json({ ok: true, ignored: "unhandled_type" });
+  } catch (err) {
+    console.error("[PayPal Webhook] Error:", err);
+    return res.status(200).json({ ok: false, logged: true });
+  }
+});
+
+// ===================== ARRANQUE =====================
 
 app.listen(PORT, () => {
   console.log(`Calmward API escuchando en puerto ${PORT}`);
   console.log(`? GROQ_MODEL = ${GROQ_MODEL}`);
+  console.log(`? DB: ${DATABASE_URL ? "conectada" : "NO CONFIGURADA"}`);
   console.log(
-    `? DB: ${
-      DATABASE_URL ? "conectada (DATABASE_URL presente)" : "NO CONFIGURADA"
+    `? PayPal: ${
+      PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET
+        ? `configurado en modo ${process.env.PAYPAL_ENV || "live"}`
+        : "NO CONFIGURADO"
     }`
   );
 });

@@ -27,6 +27,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import AppHeader from "../components/AppHeader";
+import AppLogo from "../components/AppLogo";
 import { API_BASE_URL, AI_ENABLED } from "../config";
 
 const Stack = createNativeStackNavigator();
@@ -38,18 +39,38 @@ const { width } = Dimensions.get("window");
 type AuthContextType = {
   isLogged: boolean;
   userEmail: string | null;
+
+  // Flags base
   isSponsor: boolean;
+  isPremium: boolean;
+
+  // Flags "activos" (según backend)
+  isSponsorActive: boolean;
+  isPremiumActive: boolean;
+
   sessionTimeoutMinutes: number;
   authToken: string | null;
+
   login: (
     email: string,
     token: string,
-    isSponsorFromApi?: boolean
+    isSponsorFromApi?: boolean,
+    isPremiumFromApi?: boolean,
+    isSponsorActiveFromApi?: boolean,
+    isPremiumActiveFromApi?: boolean
   ) => Promise<void>;
+
   logout: () => Promise<void>;
+
   setSponsor: (value: boolean) => Promise<void>;
+  setPremium: (value: boolean) => Promise<void>;
+
   setSessionTimeoutMinutes: (minutes: number) => Promise<void>;
+
+  // Sync opcional contra backend (muy útil tras pagar)
+  refreshBilling: () => Promise<void>;
 };
+
 
 const AuthContext = React.createContext<AuthContextType>({
   isLogged: false,
@@ -85,7 +106,7 @@ const SPONSORS: Sponsor[] = [
     tagline: "Cuadernos para escribir lo que no dices en voz alta.",
     description:
       "Marca imaginaria de papelería que apoya proyectos relacionados con el bienestar emocional y el hábito de escribir.",
-    cta: "Ejemplo de marca que apoya que Calmward pueda seguir siendo gratuita.",
+    cta: "Ejemplo de marca que colabora con Calmward.",
     url: "https://www.ejemplo.com/mindspace",
   },
   {
@@ -103,7 +124,7 @@ const SPONSORS: Sponsor[] = [
     tagline: "Proyectos digitales centrados en salud emocional.",
     description:
       "Estudio digital que apoya herramientas que cuidan de la mente, no solo del rendimiento.",
-    cta: "Un patrocinio aquí ayuda a mantener la app sin anuncios invasivos.",
+    cta: "Un patrocinio aquí ayuda a que más personas conozcan tu proyecto.",
     url: "https://www.ejemplo.com/respiraapp",
   },
 ];
@@ -115,10 +136,7 @@ function AppFooter() {
   return (
     <View style={styles.footerContainer}>
       <View style={styles.footerLogoRow}>
-        <View style={styles.footerLogoCircle}>
-          <Text style={styles.footerLogoLetter}>C</Text>
-        </View>
-        <Text style={styles.footerLogoText}>Calmward</Text>
+        <AppLogo size="sm" />
       </View>
       <Text style={styles.footerCopyright}>
         © {year} Calmward · Bienestar diario
@@ -242,24 +260,74 @@ function AuthScreen({ navigation }: any) {
     }
   }
 
+  async function handleForgotPassword() {
+    if (!email.trim()) {
+      setError(
+        "Escribe tu correo electrónico para poder enviarte el enlace de recuperación."
+      );
+      return;
+    }
+
+    if (!API_BASE_URL) {
+      setError(
+        "La API de Calmward no está configurada. Revisa API_BASE_URL en config.ts."
+      );
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      if (!res.ok) {
+        let msg =
+          "No se ha podido iniciar el proceso de recuperación. Inténtalo de nuevo más tarde.";
+        try {
+          const data = await res.json();
+          if (data && typeof data.error === "string" && data.error.trim()) {
+            msg = data.error.trim();
+          }
+        } catch {}
+        Alert.alert("Recuperar contraseña", msg);
+        return;
+      }
+
+      Alert.alert(
+        "Recuperar contraseña",
+        "Si ese correo existe en Calmward, recibirás un email con instrucciones para restablecer tu contraseña."
+      );
+    } catch (e) {
+      console.log("Error en recuperar contraseña", e);
+      Alert.alert(
+        "Recuperar contraseña",
+        "No se ha podido conectar con el servidor. Inténtalo más tarde."
+      );
+    }
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
+      <AppHeader navigation={navigation} />
       <ScrollView
         contentContainerStyle={styles.authScroll}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.authHeaderTop}>
-          <Text style={styles.appMiniTitle}>Calmward</Text>
+          <AppLogo size="lg" />
           <Text style={styles.appMiniTagline}>
-            Respira, escribe, pide ayuda
+            Un lugar discreto para registrar tu día, hablar cuando lo necesites
+            y pedir ayuda si algo se complica.
           </Text>
         </View>
 
         <View style={styles.authCard}>
           <Text style={styles.authWelcome}>Bienvenido a Calmward</Text>
           <Text style={styles.authSubtitle}>
-            Un lugar discreto para registrar tu día, hablar cuando lo
-            necesites y tener a mano ayuda si algo se complica.
+            Inicia sesión o crea tu cuenta para guardar tu día, hablar con la IA
+            y acceder a la Comunidad de forma anónima.
           </Text>
 
           <View style={styles.authTabRow}>
@@ -305,7 +373,7 @@ function AuthScreen({ navigation }: any) {
               autoCapitalize="none"
               value={email}
               onChangeText={setEmail}
-              placeholder="tu_correo@example.com"
+              placeholder="tu_correo@ejemplo.com"
               placeholderTextColor="#9CA3AF"
             />
 
@@ -328,6 +396,17 @@ function AuthScreen({ navigation }: any) {
                 </Text>
               </TouchableOpacity>
             </View>
+
+            {mode === "login" && (
+              <TouchableOpacity
+                style={styles.forgotBtn}
+                onPress={handleForgotPassword}
+              >
+                <Text style={styles.forgotText}>
+                  Recuperar contraseña por correo
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {mode === "register" && (
               <>
@@ -405,7 +484,7 @@ function AuthScreen({ navigation }: any) {
 // ---------- TAB: INICIO ----------
 
 function HomeScreen({ navigation }: any) {
-  const { isLogged, authToken, isSponsor } = useAuth();
+  const { isLogged, isSponsor } = useAuth();
   const [sponsorIndex, setSponsorIndex] = useState(0);
   const scrollRef = useRef<ScrollView | null>(null);
   const CARD_WIDTH = width * 0.8;
@@ -488,7 +567,7 @@ function HomeScreen({ navigation }: any) {
           <View style={styles.sponsorHeaderRow}>
             <Text style={styles.sponsorBadge}>Patrocinado</Text>
             <Text style={styles.sponsorMiniText}>
-              Ayudan a que Calmward siga siendo gratuita
+              Espacio reservado para proyectos que se anuncian en Calmward
             </Text>
           </View>
 
@@ -563,14 +642,17 @@ function HomeScreen({ navigation }: any) {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Patrocina Calmward</Text>
           <Text style={styles.sectionBody}>
-            Los patrocinios permiten que la app pueda seguir siendo gratuita y
-            sin anuncios invasivos. A cambio, tu marca aparece en el bloque de
-            patrocinios de la pantalla de inicio.
+            Si tienes una app, un proyecto o una marca relacionada con bienestar
+            emocional, puedes reservar una tarjeta como la de arriba para
+            mostrarla a las personas que usan Calmward.
           </Text>
           <Text style={styles.sectionBody}>
-            Si contratas un patrocinio, en tu cuenta verás un apartado de
-            estadísticas con datos básicos de visualizaciones e interacciones
-            (pensado para conectar con un backend más adelante).
+            • El patrocinio te permite enseñar tu proyecto de forma discreta
+            dentro de la app.{"\n"}
+            • Puedes enlazar a tu web, a tu app o a la tienda donde se descargue
+            tu producto.{"\n"}
+            • Más adelante podrás ver estadísticas básicas de visualizaciones y
+            toques en tu tarjeta.
           </Text>
 
           {isSponsor ? (
@@ -580,7 +662,7 @@ function HomeScreen({ navigation }: any) {
             </Text>
           ) : (
             <Text style={[styles.sectionBody, { marginTop: 8 }]}>
-              Para patrocinar Calmward necesitas tener una cuenta y haber
+              Para configurar un patrocinio necesitas tener una cuenta y haber
               iniciado sesión.
             </Text>
           )}
@@ -593,7 +675,7 @@ function HomeScreen({ navigation }: any) {
             onPress={handleSponsorPayment}
           >
             <Text style={styles.sponsorPayButtonText}>
-              {isLogged ? "Ir a página de pago" : "Inicia sesión para patrocinar"}
+              {isLogged ? "Ir a página de patrocinio" : "Inicia sesión para patrocinar"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -763,7 +845,6 @@ function CommunityScreen({ navigation }: any) {
       );
       if (!res.ok) return;
       const data = await res.json();
-      const liked = !!data.liked;
       const likeCount =
         typeof data.likeCount === "number"
           ? data.likeCount
@@ -1196,7 +1277,12 @@ function TalkScreen({ navigation }: any) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const res = await fetch(`${API_BASE_URL}/ai/talk`, {
+      const endpoint =
+        apiMode === "solo_escuchame"
+          ? "/ai/talk"
+          : "/ai/organize";
+
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1223,7 +1309,7 @@ function TalkScreen({ navigation }: any) {
           console.log("Respuesta IA sin 'reply' claro:", data);
         }
       } else {
-        console.log("IA /ai/talk devolvió error HTTP", res.status);
+        console.log("IA devolvió error HTTP", res.status);
       }
     } catch (err) {
       console.log("Error/timeout IA con contexto, uso respuesta local.", err);
@@ -1328,7 +1414,7 @@ function TalkScreen({ navigation }: any) {
                 <Text style={styles.chatPlaceholder}>
                   {mode === "listen"
                     ? "Habla conmigo como con un amigo de confianza. Puedes empezar por cómo te sientes hoy o qué te está costando más."
-                    : "Aquí la IA intentará ayudarte a poner orden: decisiones, problemas que se te hacen bola, siguientes pasos pequeños…"}
+                    : "Aquí la IA intentará ayudarte a poner orden: decisiones, problemas que se te hacen bola, siguientes pasos pequeños… (esta parte se desbloquea con Premium en el backend)."}
                 </Text>
               )}
             </View>
@@ -1693,7 +1779,7 @@ function ContactScreen({ navigation }: any) {
             Si quieres escribirnos por dudas, propuestas de colaboración o
             patrocinios, puedes hacerlo aquí:
           </Text>
-          <Text style={[styles.sectionBody, { marginTop: 8 }]} >
+          <Text style={[styles.sectionBody, { marginTop: 8 }]}>
             Correo de contacto:{" "}
             <Text style={{ fontWeight: "600" }}>soporte@calmward.app</Text>
           </Text>
@@ -1810,7 +1896,7 @@ function SponsorStatsScreen({ navigation }: any) {
   );
 }
 
-// ---------- PAGO DE PATROCINIO ----------
+// ---------- PAGO DE PATROCINIO (SIMULACIÓN) ----------
 
 function SponsorPaymentScreen({ navigation }: any) {
   const { userEmail, setSponsor } = useAuth();
@@ -1851,8 +1937,8 @@ function SponsorPaymentScreen({ navigation }: any) {
       );
 
       Alert.alert(
-        "Patrocinio activado",
-        "Simulación de pago completada. Tu cuenta se ha marcado como patrocinador de Calmward."
+        "Patrocinio activado (simulación)",
+        "Tu cuenta se ha marcado como patrocinador de Calmward. En producción, aquí se conectará el pago real por PayPal."
       );
 
       const parent = navigation.getParent?.() || navigation;
@@ -1904,7 +1990,7 @@ function SponsorPaymentScreen({ navigation }: any) {
           <Text style={styles.sectionBody}>
             Aquí configuras tu patrocinio. Los pagos de esta pantalla son una
             simulación hasta que conectes una pasarela real (Stripe, PayPal,
-            etc.).
+            etc.) en el backend.
           </Text>
 
           <Text style={[styles.label, { marginTop: 12 }]}>
@@ -1956,9 +2042,8 @@ function SponsorPaymentScreen({ navigation }: any) {
           </View>
 
           <Text style={[styles.sectionBody, { marginTop: 12 }]}>
-            Al confirmar, tu cuenta se marca como patrocinador dentro de
-            Calmward y podrás ver un panel de estadísticas interno. Para
-            producción, conecta aquí tu pasarela de pago real.
+            En producción, aquí se abrirá el checkout de PayPal con pago por
+            tarjeta o cuenta PayPal, y el dinero llegará a tu cuenta PayPal.
           </Text>
 
           <TouchableOpacity
@@ -1967,7 +2052,7 @@ function SponsorPaymentScreen({ navigation }: any) {
             disabled={processing}
           >
             <Text style={styles.paymentConfirmButtonText}>
-              {processing ? "Procesando..." : "Confirmar pago (simulado)"}
+              {processing ? "Procesando..." : "Confirmar patrocinio (demo)"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -2289,6 +2374,7 @@ function AdminPanelScreen({ navigation }: any) {
               Calmward.
             </Text>
           </View>
+          <AppFooter />
         </ScrollView>
       </SafeAreaView>
     );
@@ -2741,25 +2827,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 4,
   },
-  footerLogoCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#0EA5E9",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 6,
-  },
-  footerLogoLetter: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  footerLogoText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#111827",
-  },
   footerCopyright: {
     fontSize: 11,
     color: "#9CA3AF",
@@ -2778,14 +2845,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
   },
-  appMiniTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#111827",
-  },
   appMiniTagline: {
+    marginTop: 8,
     fontSize: 13,
     color: "#6B7280",
+    textAlign: "center",
   },
   authCard: {
     backgroundColor: "#FFFFFF",
@@ -2876,6 +2940,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 12,
     color: "#DC2626",
+  },
+  forgotBtn: {
+    marginTop: 8,
+    alignSelf: "flex-end",
+  },
+  forgotText: {
+    fontSize: 12,
+    color: "#0EA5E9",
   },
   modeRow: {
     flexDirection: "row",
@@ -3050,17 +3122,6 @@ const styles = StyleSheet.create({
   dayTabText: {
     color: "#111827",
     fontWeight: "500",
-  },
-  logoutBtn: {
-    marginTop: 20,
-    backgroundColor: "#F97373",
-    borderRadius: 999,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  logoutText: {
-    color: "#FFFFFF",
-    fontWeight: "600",
   },
   sponsorStatsBtn: {
     marginTop: 12,
