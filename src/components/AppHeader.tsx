@@ -166,11 +166,8 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
       <View style={styles.headerRow}>
         {/* Logo + nombre app (sin tagline) */}
         <View style={styles.brandRow}>
-          <AppLogo size="sm" showText={false} />
-          <View style={styles.titleBox}>
-            <Text style={styles.appName}>Calmward</Text>
-          </View>
-        </View>
+		<AppLogo size="sm" showText />
+		</View>
 
         {/* Acciones derecha: menú hamburguesa + login/avatar */}
         <View style={styles.actions}>
@@ -305,15 +302,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     maxWidth: width * 0.6,
-  },
-  titleBox: {
-    marginLeft: 8,
-    flexShrink: 1,
-  },
-  appName: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#0EA5E9", // más visible
   },
   actions: {
     flexDirection: "row",

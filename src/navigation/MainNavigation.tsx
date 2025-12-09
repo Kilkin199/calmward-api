@@ -71,17 +71,28 @@ type AuthContextType = {
   refreshBilling: () => Promise<void>;
 };
 
-
 const AuthContext = React.createContext<AuthContextType>({
   isLogged: false,
   userEmail: null,
+
   isSponsor: false,
+  isPremium: false,
+
+  isSponsorActive: false,
+  isPremiumActive: false,
+
   sessionTimeoutMinutes: 30,
   authToken: null,
+
   login: async () => {},
   logout: async () => {},
+
   setSponsor: async () => {},
+  setPremium: async () => {},
+
   setSessionTimeoutMinutes: async () => {},
+
+  refreshBilling: async () => {},
 });
 
 function useAuth() {
@@ -1277,10 +1288,7 @@ function TalkScreen({ navigation }: any) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const endpoint =
-        apiMode === "solo_escuchame"
-          ? "/ai/talk"
-          : "/ai/organize";
+      const endpoint = "/ai/talk";
 
       const res = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: "POST",
@@ -2626,6 +2634,9 @@ export default function MainNavigation() {
   const [isSponsor, setIsSponsorState] = useState(false);
   const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState(30);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const [isPremium, setIsPremiumState] = useState(false);
+  const [isSponsorActive, setIsSponsorActiveState] = useState(false);
+  const [isPremiumActive, setIsPremiumActiveState] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -2633,6 +2644,9 @@ export default function MainNavigation() {
         const token = await AsyncStorage.getItem("calmward_token");
         const email = await AsyncStorage.getItem("calmward_email");
         const sponsorFlag = await AsyncStorage.getItem("calmward_is_sponsor");
+		const premiumFlag = await AsyncStorage.getItem("calmward_is_premium");
+		const sponsorActiveFlag = await AsyncStorage.getItem("calmward_is_sponsor_active");
+		const premiumActiveFlag = await AsyncStorage.getItem("calmward_is_premium_active");
         const timeoutStr = await AsyncStorage.getItem(
           "calmward_session_timeout_minutes"
         );
@@ -2640,6 +2654,9 @@ export default function MainNavigation() {
         setIsLogged(!!token);
         setUserEmail(email);
         setIsSponsorState(sponsorFlag === "1");
+		setIsPremiumState(premiumFlag === "1");
+		setIsSponsorActiveState(sponsorActiveFlag === "1");
+		setIsPremiumActiveState(premiumActiveFlag === "1");
         setAuthToken(token);
 
         if (timeoutStr) {
@@ -2660,7 +2677,13 @@ export default function MainNavigation() {
     }
     load();
   }, []);
-
+  
+	useEffect(() => {
+	if (authToken) {
+		refreshBilling();
+	}
+	}, [authToken]);
+	
   useEffect(() => {
     if (!isLogged) return;
 
@@ -2690,14 +2713,58 @@ export default function MainNavigation() {
     return () => clearInterval(id);
   }, [isLogged, sessionTimeoutMinutes]);
 
+async function refreshBilling() {
+  try {
+    if (!API_BASE_URL || !authToken) return;
+
+    const res = await fetch(`${API_BASE_URL}/billing/subscription`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (!res.ok) return;
+
+    const data = await res.json();
+
+    const s = !!data?.isSponsor;
+    const p = !!data?.isPremium;
+    const sA = !!data?.isSponsorActive;
+    const pA = !!data?.isPremiumActive;
+
+    await AsyncStorage.setItem("calmward_is_sponsor", s ? "1" : "0");
+    await AsyncStorage.setItem("calmward_is_premium", p ? "1" : "0");
+    await AsyncStorage.setItem("calmward_is_sponsor_active", sA ? "1" : "0");
+    await AsyncStorage.setItem("calmward_is_premium_active", pA ? "1" : "0");
+
+    setIsSponsorState(s);
+    setIsPremiumState(p);
+    setIsSponsorActiveState(sA);
+    setIsPremiumActiveState(pA);
+  } catch {
+    // silencioso
+  }
+}
+
   const authContext = useMemo<AuthContextType>(
     () => ({
-      isLogged,
-      userEmail,
-      isSponsor,
-      sessionTimeoutMinutes,
-      authToken,
-      login: async (email: string, token: string, sponsorFlag?: boolean) => {
+		isLogged,
+		userEmail,
+
+		isSponsor,
+		isPremium,
+
+		isSponsorActive,
+		isPremiumActive,
+
+		sessionTimeoutMinutes,
+		authToken,
+		
+      login: async (
+		email: string,
+		token: string,
+		sponsorFlag?: boolean,
+		premiumFlag?: boolean,
+		sponsorActiveFlag?: boolean,
+		premiumActiveFlag?: boolean
+		) => {
         await AsyncStorage.setItem("calmward_token", token);
         await AsyncStorage.setItem("calmward_email", email);
         await AsyncStorage.setItem(
@@ -2705,24 +2772,55 @@ export default function MainNavigation() {
           String(Date.now())
         );
         if (typeof sponsorFlag === "boolean") {
-          await AsyncStorage.setItem(
-            "calmward_is_sponsor",
-            sponsorFlag ? "1" : "0"
-          );
-          setIsSponsorState(sponsorFlag);
-        }
+		await AsyncStorage.setItem(
+			"calmward_is_sponsor",
+			sponsorFlag ? "1" : "0"
+		);
+		setIsSponsorState(sponsorFlag);
+		}
+		if (typeof premiumFlag === "boolean") {
+		await AsyncStorage.setItem(
+			"calmward_is_premium",
+			premiumFlag ? "1" : "0"
+		);
+		setIsPremiumState(premiumFlag);
+		}
+
+		if (typeof sponsorActiveFlag === "boolean") {
+		await AsyncStorage.setItem(
+			"calmward_is_sponsor_active",
+			sponsorActiveFlag ? "1" : "0"
+		);
+		setIsSponsorActiveState(sponsorActiveFlag);
+		}
+
+		if (typeof premiumActiveFlag === "boolean") {
+		await AsyncStorage.setItem(
+			"calmward_is_premium_active",
+			premiumActiveFlag ? "1" : "0"
+		);
+		setIsPremiumActiveState(premiumActiveFlag);
+		}
+
         setIsLogged(true);
         setUserEmail(email);
         setAuthToken(token);
+		await refreshBilling();
       },
       logout: async () => {
         await AsyncStorage.removeItem("calmward_token");
         await AsyncStorage.removeItem("calmward_email");
         await AsyncStorage.removeItem("calmward_is_sponsor");
+		await AsyncStorage.removeItem("calmward_is_premium");
+		await AsyncStorage.removeItem("calmward_is_sponsor_active");
+		await AsyncStorage.removeItem("calmward_is_premium_active");
         await AsyncStorage.removeItem("calmward_last_activity");
         setIsLogged(false);
         setUserEmail(null);
         setIsSponsorState(false);
+		setIsPremiumState(false);
+		setIsSponsorActiveState(false);
+		setIsPremiumActiveState(false);
         setAuthToken(null);
       },
 
@@ -2730,6 +2828,10 @@ export default function MainNavigation() {
         await AsyncStorage.setItem("calmward_is_sponsor", value ? "1" : "0");
         setIsSponsorState(value);
       },
+	  setPremium: async (value: boolean) => {
+	  await AsyncStorage.setItem("calmward_is_premium", value ? "1" : "0");
+	  setIsPremiumState(value);
+	  },
       setSessionTimeoutMinutes: async (minutes: number) => {
         const safe = minutes < 0 ? 0 : minutes;
         await AsyncStorage.setItem(
@@ -2738,6 +2840,9 @@ export default function MainNavigation() {
         );
         setSessionTimeoutMinutesState(safe);
       },
+	  refreshBilling: async () => {
+	  await refreshBilling();
+	  },
     }),
     [isLogged, userEmail, isSponsor, sessionTimeoutMinutes, authToken]
   );
