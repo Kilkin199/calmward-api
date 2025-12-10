@@ -762,6 +762,8 @@ app.get("/community/posts/:id/comments", async (req, res) => {
 
 app.post("/ai/talk", async (req, res) => {
   try {
+	  const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
     if (!GROQ_API_KEY) {
       return res.status(500).json({
         error: "Falta GROQ_API_KEY en el servidor. Configúrala en Render.",

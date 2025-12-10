@@ -161,9 +161,11 @@ function AppFooter() {
 
 // ---------- PANTALLA DE AUTENTICACIÓN (BIENVENIDA + LOGIN/REGISTRO) ----------
 
-function AuthScreen({ navigation }: any) {
+function AuthScreen({ navigation, route }: any) {
   const { login } = useAuth();
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register">(
+    route?.params?.startMode === "register" ? "register" : "login"
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [gender, setGender] = useState<"hombre" | "mujer" | "otro" | "nd" | "">(
@@ -243,7 +245,14 @@ function AuthScreen({ navigation }: any) {
         return;
       }
 
-      await login(email, token, isSponsorFromApi);
+      await login(
+		email,
+		token,
+		isSponsorFromApi,
+		isPremiumFromApi,
+		isSponsorActiveFromApi,
+		isPremiumActiveFromApi
+		);
 
       if (mode === "register" && gender) {
         try {
@@ -773,7 +782,10 @@ function CommunityScreen({ navigation }: any) {
   useEffect(() => {
     loadPosts(true);
   }, []);
-
+  function goToAuth(startMode: "login" | "register") {
+      const parentNav = navigation.getParent?.() || navigation;
+      parentNav.navigate("Auth", { startMode });
+    }
   function ensureLoggedForCommunity(actionLabel: string) {
     if (isLogged && authToken) return true;
     Alert.alert(
@@ -954,52 +966,67 @@ function CommunityScreen({ navigation }: any) {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Comunidad</Text>
-          <Text style={styles.sectionBody}>
-            Aquí puedes escribir lo que quieras compartir de forma anónima. No
-            uses nombres reales ni datos que identifiquen a nadie. Los mensajes
-            que ataquen, manipulen o falten al respeto a otras personas se
-            bloquean automáticamente.
-          </Text>
+                  {!isLogged ? (
+            <View style={styles.talkAuthGate}>
+              <Text style={styles.talkAuthTitle}>
+                Para publicar en la Comunidad necesitas una cuenta
+              </Text>
+              <Text style={styles.talkAuthSubtitle}>
+                Puedes leer lo que comparte la gente, pero para publicar, comentar o dar “me gusta”
+                debes iniciar sesión.
+              </Text>
 
-          {!isLogged && (
-            <Text
-              style={{
-                marginTop: 8,
-                fontSize: 12,
-                color: "#DC2626",
-              }}
-            >
-              Para publicar, comentar o dar “me gusta” necesitas iniciar sesión.
-            </Text>
+              <View style={styles.talkAuthButtonsRow}>
+                <TouchableOpacity
+                  style={styles.talkAuthBtnOutline}
+                  onPress={() => goToAuth("login")}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.talkAuthBtnOutlineText}>
+                    Iniciar sesión
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.talkAuthBtnPrimary}
+                  onPress={() => goToAuth("register")}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.talkAuthBtnPrimaryText}>
+                    Crear cuenta
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <>
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                ¿Qué te gustaría compartir hoy?
+              </Text>
+              <TextInput
+                style={styles.dayInput}
+                placeholder="Escribe algo que quieras sacar de dentro, desde el respeto hacia ti y hacia los demás..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+                value={newText}
+                onChangeText={setNewText}
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.daySaveBtn,
+                  (!newText.trim() || sending) && { opacity: 0.6 },
+                ]}
+                onPress={handlePublish}
+                disabled={!newText.trim() || sending}
+              >
+                <Text style={styles.daySaveText}>
+                  {sending ? "Publicando..." : "Publicar anónimo"}
+                </Text>
+              </TouchableOpacity>
+            </>
           )}
 
-          <Text style={[styles.label, { marginTop: 12 }]}>
-            ¿Qué te gustaría compartir hoy?
-          </Text>
-          <TextInput
-            style={styles.dayInput}
-            placeholder="Escribe algo que quieras sacar de dentro, desde el respeto hacia ti y hacia los demás..."
-            placeholderTextColor="#9CA3AF"
-            multiline
-            value={newText}
-            onChangeText={setNewText}
-          />
-
-          <TouchableOpacity
-            style={[
-              styles.daySaveBtn,
-              (!newText.trim() || sending) && { opacity: 0.6 },
-            ]}
-            onPress={handlePublish}
-            disabled={!newText.trim() || sending}
-          >
-            <Text style={styles.daySaveText}>
-              {sending ? "Publicando..." : "Publicar anónimo"}
-            </Text>
-          </TouchableOpacity>
-        </View>
 
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Lo último que se ha compartido</Text>
@@ -1050,16 +1077,19 @@ function CommunityScreen({ navigation }: any) {
                 }}
               >
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <TouchableOpacity
+                                    <TouchableOpacity
                     onPress={() => handleLike(p.id)}
+                    disabled={!isLogged}
                     style={{
                       paddingVertical: 4,
                       paddingHorizontal: 8,
                       borderRadius: 999,
-                      backgroundColor: "#0EA5E9",
+                      backgroundColor: isLogged ? "#0EA5E9" : "#CBD5E1",
                       marginRight: 6,
+                      opacity: isLogged ? 1 : 0.8,
                     }}
                   >
+
                     <Text
                       style={{
                         color: "#FFFFFF",
@@ -1077,14 +1107,17 @@ function CommunityScreen({ navigation }: any) {
                   </Text>
                 </View>
 
-                <TouchableOpacity
+                 <TouchableOpacity
                   onPress={() => openCommentBox(p.id)}
+                  disabled={!isLogged}
                   style={{
                     paddingVertical: 4,
                     paddingHorizontal: 8,
                     borderRadius: 999,
                     borderWidth: 1,
-                    borderColor: "#D1D5DB",
+                    borderColor: isLogged ? "#D1D5DB" : "#E5E7EB",
+                    backgroundColor: isLogged ? "transparent" : "#F3F4F6",
+                    opacity: isLogged ? 1 : 0.85,
                   }}
                 >
                   <Text
@@ -1208,6 +1241,7 @@ type ChatMessage = {
 };
 
 function TalkScreen({ navigation }: any) {
+  const { isLogged, authToken } = useAuth();
   const [mode, setMode] = useState<"listen" | "organize">("listen");
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -1228,7 +1262,18 @@ function TalkScreen({ navigation }: any) {
       // ignoramos
     }
   }
+  function ensureLoggedForAI() {
+      if (isLogged && authToken) return true;
 
+      Alert.alert(
+        "Inicia sesión",
+        "Necesitas iniciar sesión para usar el chat IA de Calmward."
+      );
+
+      const parentNav = navigation.getParent?.() || navigation;
+      parentNav.navigate("Auth");
+      return false;
+    }
   function getModeConfig() {
     if (mode === "listen") {
       return {
@@ -1245,6 +1290,7 @@ function TalkScreen({ navigation }: any) {
   }
 
   async function handleSend() {
+	if (!ensureLoggedForAI()) return;
     const trimmed = text.trim();
     if (!trimmed || sending) return;
 
@@ -1292,7 +1338,10 @@ function TalkScreen({ navigation }: any) {
 
       const res = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           mode: apiMode,
           message: trimmed,
@@ -1339,7 +1388,11 @@ function TalkScreen({ navigation }: any) {
 
     setter((prev) => [...prev, aiMsg]);
   }
-
+	function goToAuth(startMode: "login" | "register") {
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("Auth", { startMode });
+	}
+	
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
@@ -1360,101 +1413,138 @@ function TalkScreen({ navigation }: any) {
               eliges el modo.
             </Text>
 
-            <View style={styles.modeRow}>
-              <TouchableOpacity
-                onPress={() => setMode("listen")}
-                style={[
-                  styles.modeButton,
-                  mode === "listen" && styles.modeButtonActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modeButtonText,
-                    mode === "listen" && styles.modeButtonTextActive,
-                  ]}
-                >
-                  Solo escúchame
+                        {!isLogged ? (
+              <View style={styles.talkAuthGate}>
+                <Text style={styles.talkAuthTitle}>
+                  Para usar el chat necesitas una cuenta
                 </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setMode("organize")}
-                style={[
-                  styles.modeButton,
-                  mode === "organize" && styles.modeButtonActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modeButtonText,
-                    mode === "organize" && styles.modeButtonTextActive,
-                  ]}
-                >
-                  Ayúdame a ordenar
+                <Text style={styles.talkAuthSubtitle}>
+                  Así mantenemos la Comunidad y el chat más seguros y evitamos abuso.
                 </Text>
-              </TouchableOpacity>
-            </View>
 
-            <View style={styles.chatBox}>
-              {activeMessages.map((m) => (
-                <View
-                  key={m.id}
-                  style={[
-                    styles.chatBubble,
-                    m.from === "user"
-                      ? styles.chatBubbleUser
-                      : styles.chatBubbleAi,
-                  ]}
-                >
-                  <Text
-                    style={
-                      m.from === "user"
-                        ? styles.chatTextUser
-                        : styles.chatTextAi
-                    }
+                <View style={styles.talkAuthButtonsRow}>
+                  <TouchableOpacity
+                    style={styles.talkAuthBtnOutline}
+                    onPress={() => goToAuth("login")}
+                    activeOpacity={0.85}
                   >
-                    {m.text}
-                  </Text>
+                    <Text style={styles.talkAuthBtnOutlineText}>
+                      Iniciar sesión
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.talkAuthBtnPrimary}
+                    onPress={() => goToAuth("register")}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.talkAuthBtnPrimaryText}>
+                      Crear cuenta
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-              ))}
+              </View>
+            ) : (
+              <>
+                <View style={styles.modeRow}>
+                  <TouchableOpacity
+                    onPress={() => setMode("listen")}
+                    style={[
+                      styles.modeButton,
+                      mode === "listen" && styles.modeButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeButtonText,
+                        mode === "listen" && styles.modeButtonTextActive,
+                      ]}
+                    >
+                      Solo escúchame
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setMode("organize")}
+                    style={[
+                      styles.modeButton,
+                      mode === "organize" && styles.modeButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeButtonText,
+                        mode === "organize" && styles.modeButtonTextActive,
+                      ]}
+                    >
+                      Ayúdame a ordenar
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
-              {activeMessages.length === 0 && (
-                <Text style={styles.chatPlaceholder}>
-                  {mode === "listen"
-                    ? "Habla conmigo como con un amigo de confianza. Puedes empezar por cómo te sientes hoy o qué te está costando más."
-                    : "Aquí la IA intentará ayudarte a poner orden: decisiones, problemas que se te hacen bola, siguientes pasos pequeños… (esta parte se desbloquea con Premium en el backend)."}
+                <View style={styles.chatBox}>
+                  {activeMessages.map((m) => (
+                    <View
+                      key={m.id}
+                      style={[
+                        styles.chatBubble,
+                        m.from === "user"
+                          ? styles.chatBubbleUser
+                          : styles.chatBubbleAi,
+                      ]}
+                    >
+                      <Text
+                        style={
+                          m.from === "user"
+                            ? styles.chatTextUser
+                            : styles.chatTextAi
+                        }
+                      >
+                        {m.text}
+                      </Text>
+                    </View>
+                  ))}
+
+                  {activeMessages.length === 0 && (
+                    <Text style={styles.chatPlaceholder}>
+                      {mode === "listen"
+                        ? "Habla conmigo como con un amigo de confianza. Puedes empezar por cómo te sientes hoy o qué te está costando más."
+                        : "Aquí la IA intentará ayudarte a poner orden: decisiones, problemas que se te hacen bola, siguientes pasos pequeños… (esta parte se desbloquea con Premium en el backend)."}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={styles.chatInput}
+                    placeholder={
+                      mode === "listen"
+                        ? "Dime cómo estás, aunque no tengas las palabras perfectas..."
+                        : "Cuéntame qué quieres ordenar o qué decisión se te hace difícil ahora mismo..."
+                    }
+                    placeholderTextColor="#9CA3AF"
+                    multiline
+                    value={text}
+                    onChangeText={setText}
+                  />
+                  <TouchableOpacity
+                    style={styles.sendButton}
+                    onPress={handleSend}
+                    disabled={sending}
+                  >
+                    <Text style={styles.sendButtonText}>
+                      {sending ? "..." : "Enviar"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.disclaimerSmall}>
+                  Calmward no sustituye a profesionales de salud mental ni puede
+                  responder en situaciones de emergencia.
                 </Text>
-              )}
-            </View>
+              </>
+            )}
 
-            <View style={styles.inputRow}>
-              <TextInput
-                style={styles.chatInput}
-                placeholder={
-                  mode === "listen"
-                    ? "Dime cómo estás, aunque no tengas las palabras perfectas..."
-                    : "Cuéntame qué quieres ordenar o qué decisión se te hace difícil ahora mismo..."
-                }
-                placeholderTextColor="#9CA3AF"
-                multiline
-                value={text}
-                onChangeText={setText}
-              />
-              <TouchableOpacity
-                style={styles.sendButton}
-                onPress={handleSend}
-                disabled={sending}
-              >
-                <Text style={styles.sendButtonText}>
-                  {sending ? "..." : "Enviar"}
-                </Text>
-              </TouchableOpacity>
-            </View>
 
-            <Text style={styles.disclaimerSmall}>
-              Calmward no sustituye a profesionales de salud mental ni puede
-              responder en situaciones de emergencia.
-            </Text>
           </View>
 
           <AppFooter />
@@ -1467,8 +1557,15 @@ function TalkScreen({ navigation }: any) {
 // ---------- TAB: TU DÍA ----------
 
 function DayScreen({ navigation }: any) {
+  const { isLogged } = useAuth();
+
   const [rating, setRating] = useState<number>(3);
   const [note, setNote] = useState("");
+
+  function goToAuth(startMode: "login" | "register") {
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("Auth", { startMode });
+  }
 
   async function touchActivity() {
     try {
@@ -1511,56 +1608,92 @@ function DayScreen({ navigation }: any) {
             guardando tu historia.
           </Text>
 
-          <Text style={[styles.label, { marginTop: 12 }]}>
-            ¿Cómo te sientes ahora mismo?
-          </Text>
+          {!isLogged ? (
+            <View style={styles.talkAuthGate}>
+              <Text style={styles.talkAuthTitle}>
+                Para guardar tu día necesitas una cuenta
+              </Text>
+              <Text style={styles.talkAuthSubtitle}>
+                Tu registro diario se vincula a tu sesión para que no pierdas tu historia.
+                Inicia sesión o crea una cuenta en dos toques.
+              </Text>
 
-          <View style={styles.ratingRow}>
-            {[1, 2, 3, 4, 5].map((v) => (
-              <TouchableOpacity
-                key={v}
-                style={[
-                  styles.ratingCircle,
-                  rating === v && styles.ratingCircleActive,
-                ]}
-                onPress={() => setRating(v)}
-              >
-                <Text
-                  style={[
-                    styles.ratingText,
-                    rating === v && styles.ratingTextActive,
-                  ]}
+              <View style={styles.talkAuthButtonsRow}>
+                <TouchableOpacity
+                  style={styles.talkAuthBtnOutline}
+                  onPress={() => goToAuth("login")}
+                  activeOpacity={0.85}
                 >
-                  {v}
-                </Text>
+                  <Text style={styles.talkAuthBtnOutlineText}>
+                    Iniciar sesión
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.talkAuthBtnPrimary}
+                  onPress={() => goToAuth("register")}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.talkAuthBtnPrimaryText}>
+                    Crear cuenta
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <>
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                ¿Cómo te sientes ahora mismo?
+              </Text>
+
+              <View style={styles.ratingRow}>
+                {[1, 2, 3, 4, 5].map((v) => (
+                  <TouchableOpacity
+                    key={v}
+                    style={[
+                      styles.ratingCircle,
+                      rating === v && styles.ratingCircleActive,
+                    ]}
+                    onPress={() => setRating(v)}
+                  >
+                    <Text
+                      style={[
+                        styles.ratingText,
+                        rating === v && styles.ratingTextActive,
+                      ]}
+                    >
+                      {v}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={[styles.label, { marginTop: 16 }]}>
+                ¿Quieres añadir algo?
+              </Text>
+              <TextInput
+                style={styles.dayInput}
+                placeholder="Escribe algo corto si te apetece..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+                value={note}
+                onChangeText={setNote}
+              />
+
+              <TouchableOpacity style={styles.daySaveBtn} onPress={saveDay}>
+                <Text style={styles.daySaveText}>Guardar día de hoy</Text>
               </TouchableOpacity>
-            ))}
-          </View>
 
-          <Text style={[styles.label, { marginTop: 16 }]}>
-            ¿Quieres añadir algo?
-          </Text>
-          <TextInput
-            style={styles.dayInput}
-            placeholder="Escribe algo corto si te apetece..."
-            placeholderTextColor="#9CA3AF"
-            multiline
-            value={note}
-            onChangeText={setNote}
-          />
-
-          <TouchableOpacity style={styles.daySaveBtn} onPress={saveDay}>
-            <Text style={styles.daySaveText}>Guardar día de hoy</Text>
-          </TouchableOpacity>
-
-          <View style={styles.dayTabsRow}>
-            <TouchableOpacity style={styles.dayTabActive}>
-              <Text style={styles.dayTabActiveText}>Lista</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.dayTab}>
-              <Text style={styles.dayTabText}>Resumen</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={styles.dayTabsRow}>
+                <TouchableOpacity style={styles.dayTabActive}>
+                  <Text style={styles.dayTabActiveText}>Lista</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.dayTab}>
+                  <Text style={styles.dayTabText}>Resumen</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
 
         <AppFooter />
@@ -1572,7 +1705,7 @@ function DayScreen({ navigation }: any) {
 // ---------- PERFIL + PANEL ADMIN ----------
 
 function ProfileScreen({ navigation }: any) {
-  const { userEmail, logout, isSponsor } = useAuth();
+  const { userEmail, logout, isSponsor, isLogged } = useAuth();
   const [userGender, setUserGender] = useState<string | null>(null);
 
   const isAdmin = userEmail === "calmward.contact@gmail.com";
@@ -1721,33 +1854,34 @@ function ProfileScreen({ navigation }: any) {
           )}
         </View>
 
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Patrocinio</Text>
-          {isSponsor ? (
-            <>
-              <Text style={styles.sectionBody}>
-                Tu cuenta está marcada como patrocinador activo de Calmward.
-              </Text>
-              <Text style={styles.sectionBody}>
-                Aquí podrás consultar datos básicos de visualizaciones e clics
-                de tu patrocinio cuando haya un backend conectado.
-              </Text>
-              <TouchableOpacity
-                style={styles.sponsorStatsBtn}
-                onPress={goToSponsorStats}
-              >
-                <Text style={styles.sponsorStatsBtnText}>
-                  Ver estadísticas de patrocinio
-                </Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <Text style={styles.sectionBody}>
-              De momento tu cuenta no tiene un patrocinio activo. Puedes ver
-              cómo patrocinar Calmward desde la pantalla Inicio.
-            </Text>
-          )}
-        </View>
+        {userEmail ? (
+  <View style={styles.sectionCard}>
+    <Text style={styles.sectionTitle}>Patrocinio</Text>
+    {isSponsor ? (
+      <>
+        <Text style={styles.sectionBody}>
+          Tu cuenta está marcada como patrocinador activo de Calmward.
+        </Text>
+        <Text style={styles.sectionBody}>
+          Aquí podrás consultar datos básicos cuando haya un backend conectado.
+        </Text>
+        <TouchableOpacity
+          style={styles.sponsorStatsBtn}
+          onPress={goToSponsorStats}
+        >
+          <Text style={styles.sponsorStatsBtnText}>
+            Ver estadísticas de patrocinio
+          </Text>
+        </TouchableOpacity>
+      </>
+    ) : (
+      <Text style={styles.sectionBody}>
+        De momento tu cuenta no tiene un patrocinio activo.
+      </Text>
+    )}
+  </View>
+) : null}
+
 
         <AppFooter />
       </ScrollView>
@@ -1769,10 +1903,10 @@ function ContactScreen({ navigation }: any) {
 
   async function handleEmail() {
     await touchActivity();
-    Linking.openURL("mailto:soporte@calmward.app").catch(() => {
+    Linking.openURL("mailto:calmward.contact@gmail.com")catch(() => {
       Alert.alert(
         "No se pudo abrir el correo",
-        "Copia la dirección soporte@calmward.app y escribe desde tu gestor de correo."
+        "Copia la dirección calmward.contact@gmail.com y escribe desde tu gestor de correo."
       );
     });
   }
@@ -1789,7 +1923,7 @@ function ContactScreen({ navigation }: any) {
           </Text>
           <Text style={[styles.sectionBody, { marginTop: 8 }]}>
             Correo de contacto:{" "}
-            <Text style={{ fontWeight: "600" }}>soporte@calmward.app</Text>
+            <Text style={{ fontWeight: "600" }}>calmward.contact@gmail.com</Text>
           </Text>
 
           <TouchableOpacity style={styles.contactBtn} onPress={handleEmail}>
@@ -1819,27 +1953,93 @@ function LegalScreen({ navigation }: any) {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Política de privacidad</Text>
+
           <Text style={styles.sectionBody}>
-            Calmward es una aplicación pensada para el bienestar emocional y el
-            registro personal. No está diseñada para situaciones de emergencia
-            ni sustituye la ayuda de profesionales de salud mental.
+            Calmward es una aplicación orientada al bienestar emocional y al
+            registro personal. No está diseñada para emergencias ni sustituye la
+            atención de profesionales de salud mental.
             {"\n\n"}
-            Los datos básicos de tu cuenta (como el correo electrónico) se
-            utilizan únicamente para gestionar tu sesión y no se venden a
-            terceros. Tus anotaciones personales, estados de ánimo y mensajes
-            dentro de la app están pensados para tu propio uso y no deben
-            considerarse un historial clínico.
+            Esta política explica qué datos se recogen, para qué se usan y qué
+            opciones tienes sobre ellos.
             {"\n\n"}
-            Si en el futuro conectas Calmward con algún servicio externo
-            (terapeutas, plataformas de vídeo, pasarelas de pago, etc.),
-            siempre se te informará de forma clara de qué datos se comparten y
-            con qué objetivo.
+            1) Responsable y contacto
+            {"\n"}
+            El responsable del tratamiento de los datos de esta versión de la app
+            es el equipo de Calmward. Para dudas sobre privacidad puedes
+            contactar en: calmward.contact@gmail.com.
             {"\n\n"}
-            En cualquier momento puedes dejar de usar la aplicación y eliminarla
-            de tu dispositivo. Antes de publicar la app en tiendas oficiales,
-            te recomendamos revisar esta política con un profesional legal para
-            adaptarla a las leyes de tu país (por ejemplo, RGPD en la Unión
-            Europea u otras normativas locales).
+            2) Datos que podemos tratar
+            {"\n"}
+            • Datos de cuenta: correo electrónico y credenciales asociadas a tu
+            registro/inicio de sesión.
+            {"\n"}
+            • Datos técnicos básicos: información necesaria para mantener la sesión,
+            prevenir abusos y mejorar la estabilidad del servicio.
+            {"\n"}
+            • Contenido que generas en la app:
+            {"\n"}
+            - Registro “Tu día” (valoraciones y notas).
+            {"\n"}
+            - Publicaciones y comentarios en Comunidad.
+            {"\n"}
+            - Mensajes enviados al chat cuando uses funciones conectadas a backend.
+            {"\n\n"}
+            3) Finalidades
+            {"\n"}
+            Usamos estos datos para:
+            {"\n"}
+            • Crear y mantener tu cuenta.
+            {"\n"}
+            • Permitir funciones de Comunidad de forma más segura.
+            {"\n"}
+            • Gestionar el estado de planes (por ejemplo, Sponsor/Premium) cuando
+            esta función esté activa en el backend.
+            {"\n"}
+            • Mejorar la experiencia y prevenir uso indebido.
+            {"\n\n"}
+            4) Base legal
+            {"\n"}
+            La base principal es la ejecución del servicio que solicitas al usar
+            Calmward y tu consentimiento cuando corresponda. En funciones de
+            seguridad y prevención de abuso puede aplicarse el interés legítimo
+            de proteger a la comunidad.
+            {"\n\n"}
+            5) Conservación
+            {"\n"}
+            Conservaremos los datos mientras mantengas tu cuenta o mientras sean
+            necesarios para prestar el servicio. Podremos eliminar o anonimizar
+            información cuando deje de ser necesaria.
+            {"\n\n"}
+            6) Compartición con terceros
+            {"\n"}
+            Calmward no vende tus datos. Si en el futuro se integran servicios
+            externos (por ejemplo pasarelas de pago, correo transaccional o
+            herramientas de analítica), se informará de forma clara sobre qué
+            datos se comparten y con qué propósito.
+            {"\n\n"}
+            7) Cookies y tecnologías similares
+            {"\n"}
+            La app móvil de Calmward no utiliza cookies del navegador.
+            {"\n"}
+            Sin embargo, puede usar almacenamiento local del dispositivo
+            (por ejemplo AsyncStorage) para guardar tu sesión, preferencias y
+            estados de la app.
+            {"\n"}
+            Si en el futuro existe una versión web pública de Calmward, esa web
+            podría usar cookies técnicas necesarias para funcionar y, en su caso,
+            se mostrará un aviso específico de cookies.
+            {"\n\n"}
+            8) Tus derechos
+            {"\n"}
+            Puedes solicitar acceso, rectificación o eliminación de tus datos, así
+            como otras opciones aplicables según la normativa vigente (por ejemplo
+            RGPD). Para ejercerlos, escribe a calmward.contact@gmail.com.
+            {"\n\n"}
+            9) Recomendación legal
+            {"\n"}
+            Antes de publicar la app en tiendas oficiales, te recomendamos revisar
+            esta política con asesoría legal para ajustarla a tu país y al alcance
+            final del producto.
           </Text>
         </View>
 
@@ -1848,6 +2048,7 @@ function LegalScreen({ navigation }: any) {
     </SafeAreaView>
   );
 }
+
 
 // ---------- ESTADÍSTICAS DE PATROCINIO ----------
 
@@ -2158,6 +2359,8 @@ function SettingsScreen({ navigation }: any) {
 // ---------- AYUDA URGENTE ----------
 
 function UrgentHelpScreen({ navigation }: any) {
+  const [showPhones, setShowPhones] = useState(false);
+
   async function touchActivity() {
     try {
       await AsyncStorage.setItem(
@@ -2167,12 +2370,58 @@ function UrgentHelpScreen({ navigation }: any) {
     } catch {}
   }
 
-  async function handleHelpPhones() {
-    await touchActivity();
-    Alert.alert(
-      "Teléfonos de ayuda",
-      "En la versión final podrás ver aquí teléfonos de ayuda emocional de tu país."
-    );
+  const HELP_LINES = [
+    {
+      label: "Emergencias (Europa)",
+      number: "112",
+      note: "Peligro inmediato",
+    },
+    {
+      label: "Línea 024 (España)",
+      number: "024",
+      note: "Atención a la conducta suicida",
+    },
+    {
+      label: "Teléfono de la Esperanza",
+      number: "717 003 717",
+      note: "Apoyo emocional",
+    },
+    {
+      label: "ANAR Niños y Adolescentes",
+      number: "900 20 20 10 / 116 111",
+      note: "Ayuda 24h",
+    },
+    {
+      label: "ANAR Familia y Centros Escolares",
+      number: "600 50 51 52",
+      note: "Orientación a adultos",
+    },
+    {
+      label: "ANAR Niños Desaparecidos",
+      number: "116 000",
+      note: "Línea europea",
+    },
+    {
+      label: "Acoso escolar",
+      number: "900 018 018",
+      note: "Servicio gestionado con ANAR",
+    },
+  ];
+
+  function handleHelpPhones() {
+    touchActivity();
+    setShowPhones(true);
+  }
+
+  function callNumber(num: string) {
+    const first = num.split("/")[0].trim();
+    const clean = first.replace(/\s+/g, "");
+    Linking.openURL(`tel:${clean}`).catch(() => {
+      Alert.alert(
+        "No se pudo iniciar la llamada",
+        `Marca manualmente ${first}.`
+      );
+    });
   }
 
   return (
@@ -2195,8 +2444,7 @@ function UrgentHelpScreen({ navigation }: any) {
           <Text style={styles.urgentList}>
             • Llamar a los servicios de emergencias de tu país.{"\n"}
             • Contactar con un familiar, amigo o persona de confianza.{"\n"}
-            • Buscar líneas de ayuda emocional o de prevención del suicidio en
-            tu zona.
+            • Usar líneas de ayuda emocional disponibles en tu zona.
           </Text>
 
           <TouchableOpacity
@@ -2207,6 +2455,36 @@ function UrgentHelpScreen({ navigation }: any) {
               Buscar teléfonos de ayuda
             </Text>
           </TouchableOpacity>
+
+          {showPhones && (
+            <View style={styles.urgentPhonesCard}>
+              <Text style={styles.urgentPhonesTitle}>
+                Teléfonos de ayuda en España
+              </Text>
+
+              {HELP_LINES.map((l) => (
+                <View key={l.label} style={styles.urgentPhoneRow}>
+                  <View style={styles.urgentPhoneLeft}>
+                    <Text style={styles.urgentPhoneLabel}>{l.label}</Text>
+                    <Text style={styles.urgentPhoneNumber}>{l.number}</Text>
+                    <Text style={styles.urgentPhoneNote}>{l.note}</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.urgentPhoneCall}
+                    onPress={() => callNumber(l.number)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.urgentPhoneCallText}>Llamar</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+
+              <Text style={styles.urgentPhonesHint}>
+                Si no estás en España, estos números pueden variar.
+              </Text>
+            </View>
+          )}
 
           <Text style={[styles.urgentBody, { marginTop: 16 }]}>
             También puedes usar Calmward para:
@@ -2844,8 +3122,17 @@ async function refreshBilling() {
 	  await refreshBilling();
 	  },
     }),
-    [isLogged, userEmail, isSponsor, sessionTimeoutMinutes, authToken]
-  );
+  [
+    isLogged,
+    userEmail,
+    isSponsor,
+    isPremium,
+    isSponsorActive,
+    isPremiumActive,
+    sessionTimeoutMinutes,
+    authToken
+  ]
+);
 
   if (!ready) {
     return (
@@ -3515,5 +3802,112 @@ const styles = StyleSheet.create({
   profileButtonSecondaryText: {
     color: "#111827",
     fontWeight: "500",
+  },
+    talkAuthGate: {
+    marginTop: 14,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  talkAuthTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  talkAuthSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  talkAuthButtonsRow: {
+    flexDirection: "row",
+    marginTop: 12,
+    gap: 8,
+  },
+  talkAuthBtnOutline: {
+    flex: 1,
+    borderRadius: 999,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#0EA5E9",
+    backgroundColor: "#FFFFFF",
+  },
+  talkAuthBtnOutlineText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0EA5E9",
+  },
+  talkAuthBtnPrimary: {
+    flex: 1,
+    borderRadius: 999,
+    paddingVertical: 10,
+    alignItems: "center",
+    backgroundColor: "#0EA5E9",
+  },
+  talkAuthBtnPrimaryText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+    urgentPhonesCard: {
+    marginTop: 14,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  urgentPhonesTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  urgentPhoneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E5E7EB",
+  },
+  urgentPhoneLeft: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  urgentPhoneLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  urgentPhoneNumber: {
+    marginTop: 2,
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0EA5E9",
+  },
+  urgentPhoneNote: {
+    marginTop: 2,
+    fontSize: 11,
+    color: "#6B7280",
+  },
+  urgentPhoneCall: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#0EA5E9",
+  },
+  urgentPhoneCallText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  urgentPhonesHint: {
+    marginTop: 8,
+    fontSize: 10,
+    color: "#9CA3AF",
   },
 });
