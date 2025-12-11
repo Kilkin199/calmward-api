@@ -1903,7 +1903,7 @@ function ContactScreen({ navigation }: any) {
 
   async function handleEmail() {
     await touchActivity();
-    Linking.openURL("mailto:calmward.contact@gmail.com")catch(() => {
+    Linking.openURL("mailto:calmward.contact@gmail.com").catch(() => {
       Alert.alert(
         "No se pudo abrir el correo",
         "Copia la dirección calmward.contact@gmail.com y escribe desde tu gestor de correo."
@@ -1936,6 +1936,161 @@ function ContactScreen({ navigation }: any) {
             podrías hacerte daño, contacta con los servicios de emergencia de
             tu país.
           </Text>
+        </View>
+
+        <AppFooter />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// ---------- SUGERENCIAS ----------
+
+function SuggestionsScreen({ navigation }: any) {
+  const { isLogged, authToken, userEmail } = useAuth();
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+
+  function goToAuth(startMode: "login" | "register") {
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("Auth", { startMode });
+  }
+
+  async function touchActivity() {
+    try {
+      await AsyncStorage.setItem("calmward_last_activity", String(Date.now()));
+    } catch {}
+  }
+
+  async function handleSendSuggestion() {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    if (!isLogged || !authToken) {
+      Alert.alert("Inicia sesión", "Necesitas una cuenta para enviar sugerencias.");
+      goToAuth("login");
+      return;
+    }
+
+    await touchActivity();
+    setSending(true);
+
+    try {
+      // Intento 1: enviar al backend (si algún día añades endpoint real)
+      if (API_BASE_URL) {
+        const res = await fetch(`${API_BASE_URL}/suggestions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            text: trimmed,
+            email: userEmail || undefined,
+          }),
+        });
+
+        if (res.ok) {
+          setText("");
+          Alert.alert("¡Gracias!", "Tu sugerencia se ha enviado correctamente.");
+          return;
+        }
+      }
+
+      // Fallback 2: guardado local si el backend aún no existe
+      const raw = await AsyncStorage.getItem("calmward_suggestions_outbox");
+      const list = raw ? JSON.parse(raw) : [];
+      const item = {
+        id: Date.now(),
+        text: trimmed,
+        email: userEmail || null,
+        createdAt: new Date().toISOString(),
+      };
+      list.unshift(item);
+      await AsyncStorage.setItem("calmward_suggestions_outbox", JSON.stringify(list));
+
+      setText("");
+      Alert.alert(
+        "Sugerencia guardada",
+        "De momento se ha guardado localmente. Cuando conectes el endpoint, se enviará al servidor."
+      );
+    } catch {
+      Alert.alert("Error", "No se pudo enviar la sugerencia ahora mismo.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <AppHeader navigation={navigation} />
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Sugerencias</Text>
+          <Text style={styles.sectionBody}>
+            Queremos que Calmward mejore contigo. Si tienes una idea, un fallo detectado
+            o una función que te gustaría ver, cuéntanosla aquí.
+          </Text>
+
+          {!isLogged ? (
+            <View style={styles.talkAuthGate}>
+              <Text style={styles.talkAuthTitle}>
+                Para enviar sugerencias necesitas una cuenta
+              </Text>
+              <Text style={styles.talkAuthSubtitle}>
+                Así evitamos spam y podemos priorizar mejoras reales de la comunidad.
+              </Text>
+
+              <View style={styles.talkAuthButtonsRow}>
+                <TouchableOpacity
+                  style={styles.talkAuthBtnOutline}
+                  onPress={() => goToAuth("login")}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.talkAuthBtnOutlineText}>
+                    Iniciar sesión
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.talkAuthBtnPrimary}
+                  onPress={() => goToAuth("register")}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.talkAuthBtnPrimaryText}>
+                    Crear cuenta
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <>
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                Escribe tu sugerencia
+              </Text>
+              <TextInput
+                style={styles.dayInput}
+                placeholder="Ej: Me gustaría un modo de hábitos, o un resumen semanal más visual..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+                value={text}
+                onChangeText={setText}
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.daySaveBtn,
+                  (!text.trim() || sending) && { opacity: 0.6 },
+                ]}
+                onPress={handleSendSuggestion}
+                disabled={!text.trim() || sending}
+              >
+                <Text style={styles.daySaveText}>
+                  {sending ? "Enviando..." : "Enviar sugerencia"}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         <AppFooter />
@@ -2540,42 +2695,52 @@ function AdminPanelScreen({ navigation }: any) {
     loadAll();
   }, [isAdmin, authToken]);
 
-  async function loadAll() {
-    if (!API_BASE_URL || !authToken) return;
-    try {
-      setLoading(true);
-      const [uRes, pRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/admin/users`, {
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-        }),
-        fetch(`${API_BASE_URL}/admin/posts`, {
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-        }),
-      ]);
+async function fetchWithTimeout(url: string, options: any = {}, ms = 20000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
 
-      if (uRes.ok) {
-        const data = await uRes.json();
-        setUsers(Array.isArray(data?.users) ? data.users : []);
-      }
-      if (pRes.ok) {
-        const data = await pRes.json();
-        setPosts(Array.isArray(data?.posts) ? data.posts : []);
-      }
-    } catch (e) {
-      console.log("Error cargando datos admin", e);
-      Alert.alert(
-        "Error",
-        "No se han podido cargar los datos del panel de administración."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
   }
+}
+
+  async function loadAll() {
+  if (!API_BASE_URL || !authToken) return;
+
+  try {
+    setLoading(true);
+
+    const headers = { Authorization: `Bearer ${authToken}` };
+
+    const [uRes, pRes] = await Promise.all([
+      fetchWithTimeout(`${API_BASE_URL}/admin/users`, { headers }, 20000),
+      fetchWithTimeout(`${API_BASE_URL}/admin/posts`, { headers }, 20000),
+    ]);
+
+    if (uRes && uRes.ok) {
+      const data = await uRes.json();
+      setUsers(Array.isArray(data?.users) ? data.users : []);
+    }
+
+    if (pRes && pRes.ok) {
+      const data = await pRes.json();
+      setPosts(Array.isArray(data?.posts) ? data.posts : []);
+    }
+  } catch (e) {
+    console.log("Admin load timeout/cold start", e);
+    Alert.alert(
+      "Servidor iniciándose",
+      "El backend puede estar despertando en Render. Espera unos segundos y pulsa “Actualizar datos”."
+    );
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+}
+
 
   async function handleToggleBan(u: AdminUser) {
     if (!API_BASE_URL || !authToken) return;
@@ -3148,6 +3313,7 @@ async function refreshBilling() {
         <Stack.Screen name="Root" component={AppTabs} />
         <Stack.Screen name="Auth" component={AuthScreen} />
         <Stack.Screen name="Contacto" component={ContactScreen} />
+		<Stack.Screen name="Sugerencias" component={SuggestionsScreen} />
         <Stack.Screen name="Legal" component={LegalScreen} />
         <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
         <Stack.Screen name="SponsorPayment" component={SponsorPaymentScreen} />

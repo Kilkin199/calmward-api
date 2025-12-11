@@ -91,7 +91,7 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
     navigation.navigate(target as never);
   }
 
-  function navigateStackScreen(target: "Contacto" | "Legal") {
+  function navigateStackScreen(target: "Contacto" | "Sugerencias" | "Legal") {
     closeAllMenus();
     const state = navigation.getState?.();
 
@@ -219,28 +219,41 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
       {mainMenuOpen && (
         <View style={styles.mainMenu}>
           <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => navigateStackScreen("Contacto")}
-          >
-            <MaterialCommunityIcons
-              name="email-outline"
-              size={18}
-              color="#111827"
-            />
-            <Text style={styles.menuItemText}>Contacto</Text>
-          </TouchableOpacity>
+  style={styles.menuItem}
+  onPress={() => navigateStackScreen("Contacto")}
+>
+  <MaterialCommunityIcons
+    name="email-outline"
+    size={18}
+    color="#111827"
+  />
+  <Text style={styles.menuItemText}>Contacto</Text>
+</TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => navigateStackScreen("Legal")}
-          >
-            <MaterialCommunityIcons
-              name="shield-lock-outline"
-              size={18}
-              color="#111827"
-            />
-            <Text style={styles.menuItemText}>Política de privacidad</Text>
-          </TouchableOpacity>
+<TouchableOpacity
+  style={styles.menuItem}
+  onPress={() => navigateStackScreen("Sugerencias")}
+>
+  <MaterialCommunityIcons
+    name="lightbulb-on-outline"
+    size={18}
+    color="#111827"
+  />
+  <Text style={styles.menuItemText}>Sugerencias</Text>
+</TouchableOpacity>
+
+<TouchableOpacity
+  style={styles.menuItem}
+  onPress={() => navigateStackScreen("Legal")}
+>
+  <MaterialCommunityIcons
+    name="shield-lock-outline"
+    size={18}
+    color="#111827"
+  />
+  <Text style={styles.menuItemText}>Política de privacidad</Text>
+</TouchableOpacity>
+
         </View>
       )}
 
