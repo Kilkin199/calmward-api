@@ -19,6 +19,7 @@ import {
   Linking,
   Alert,
   Dimensions,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -228,15 +229,29 @@ function AuthScreen({ navigation, route }: any) {
         return;
       }
 
-      const data = await res.json();
+            const data = await res.json();
 
       const token =
         typeof data.token === "string" && data.token.trim().length > 0
           ? data.token.trim()
           : null;
 
+      // Flags que vienen del backend (si faltan, quedan como undefined)
       const isSponsorFromApi: boolean | undefined =
         typeof data.isSponsor === "boolean" ? data.isSponsor : undefined;
+
+      const isPremiumFromApi: boolean | undefined =
+        typeof data.isPremium === "boolean" ? data.isPremium : undefined;
+
+      const isSponsorActiveFromApi: boolean | undefined =
+        typeof data.isSponsorActive === "boolean"
+          ? data.isSponsorActive
+          : undefined;
+
+      const isPremiumActiveFromApi: boolean | undefined =
+        typeof data.isPremiumActive === "boolean"
+          ? data.isPremiumActive
+          : undefined;
 
       if (!token) {
         setError(
@@ -246,13 +261,14 @@ function AuthScreen({ navigation, route }: any) {
       }
 
       await login(
-		email,
-		token,
-		isSponsorFromApi,
-		isPremiumFromApi,
-		isSponsorActiveFromApi,
-		isPremiumActiveFromApi
-		);
+        email,
+        token,
+        isSponsorFromApi,
+        isPremiumFromApi,
+        isSponsorActiveFromApi,
+        isPremiumActiveFromApi
+      );
+
 
       if (mode === "register" && gender) {
         try {

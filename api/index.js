@@ -861,6 +861,99 @@ app.get("/admin/users", async (req, res) => {
   res.json({ users: q.rows });
 });
 
+app.patch("/admin/users/:id", async (req, res) => {
+  try {
+    // 1) Comprobamos sesión + que sea admin
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+    if (!isAdminUser(auth.user)) {
+      return res.status(403).json({ error: "No autorizado." });
+    }
+
+    if (!pool) {
+      return res
+        .status(500)
+        .json({ error: "Base de datos no configurada en el servidor." });
+    }
+
+    // 2) ID de usuario a editar
+    const userId = Number(req.params.id);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: "ID de usuario inválido." });
+    }
+
+    // 3) Campos que el panel admin puede cambiar
+    const {
+      is_admin,
+      is_sponsor,
+      is_premium,
+      community_banned,
+      is_banned,
+    } = req.body || {};
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    function addField(column, value) {
+      fields.push(`${column} = $${idx++}`);
+      values.push(value);
+    }
+
+    if (typeof is_admin === "boolean") {
+      addField("is_admin", is_admin);
+    }
+    if (typeof is_sponsor === "boolean") {
+      addField("is_sponsor", is_sponsor);
+    }
+    if (typeof is_premium === "boolean") {
+      addField("is_premium", is_premium);
+    }
+    if (typeof community_banned === "boolean") {
+      addField("community_banned", community_banned);
+    }
+    if (typeof is_banned === "boolean") {
+      addField("is_banned", is_banned);
+    }
+
+    if (!fields.length) {
+      return res.status(400).json({ error: "No hay cambios que aplicar." });
+    }
+
+    // 4) Ejecutar el UPDATE
+    values.push(userId);
+
+    const q = await pool.query(
+      `
+        UPDATE users
+        SET ${fields.join(", ")}
+        WHERE id = $${idx}
+        RETURNING
+          id, email,
+          is_banned, community_banned, is_admin,
+          is_sponsor, is_premium,
+          subscription_type,
+          subscription_valid_until,
+          premium_valid_until,
+          sponsor_valid_until,
+          created_at
+      `,
+      values
+    );
+
+    if (q.rows.length === 0) {
+      return res.status(404).json({ error: "Usuario no encontrado." });
+    }
+
+    return res.json({ ok: true, user: q.rows[0] });
+  } catch (err) {
+    console.error("Error en PATCH /admin/users/:id", err);
+    return res
+      .status(500)
+      .json({ error: "Error interno al actualizar usuario." });
+  }
+});
+
 app.get("/admin/posts", async (req, res) => {
   const auth = await getUserFromRequestOrThrow(req, res);
   if (!auth) return;
