@@ -61,14 +61,17 @@ async function ensureSchema() {
     -- Suscripciones legacy
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS is_premium BOOLEAN NOT NULL DEFAULT FALSE;
+
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS subscription_type TEXT;
+
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS subscription_valid_until TIMESTAMPTZ;
 
     -- NUEVO: fechas separadas
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS premium_valid_until TIMESTAMPTZ;
+
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS sponsor_valid_until TIMESTAMPTZ;
 
@@ -80,7 +83,7 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Posts
+    -- Posts de comunidad
     CREATE TABLE IF NOT EXISTS community_posts (
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -88,15 +91,17 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Marca de patrocinio
+    -- Marca de patrocinio en posts
     ALTER TABLE community_posts
       ADD COLUMN IF NOT EXISTS is_sponsored BOOLEAN NOT NULL DEFAULT FALSE;
 
     -- Toxicidad posts
     ALTER TABLE community_posts
       ADD COLUMN IF NOT EXISTS toxicity_label TEXT;
+
     ALTER TABLE community_posts
       ADD COLUMN IF NOT EXISTS toxicity_score REAL;
+
     ALTER TABLE community_posts
       ADD COLUMN IF NOT EXISTS flagged_toxic BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -121,8 +126,10 @@ async function ensureSchema() {
     -- Toxicidad comentarios
     ALTER TABLE community_comments
       ADD COLUMN IF NOT EXISTS toxicity_label TEXT;
+
     ALTER TABLE community_comments
       ADD COLUMN IF NOT EXISTS toxicity_score REAL;
+
     ALTER TABLE community_comments
       ADD COLUMN IF NOT EXISTS flagged_toxic BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -136,6 +143,24 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Anuncios patrocinados (carrusel Inicio)
+    CREATE TABLE IF NOT EXISTS sponsor_ads (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      brand_name TEXT NOT NULL,
+      tagline TEXT,
+      description TEXT,
+      cta TEXT,
+      url TEXT,
+      image_url TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS sponsor_ads_user_id_idx
+      ON sponsor_ads(user_id);
   `;
 
   try {
@@ -151,8 +176,11 @@ async function ensureSchema() {
       WHERE subscription_valid_until IS NOT NULL
     `);
 
-    console.log("[Calmward API] Esquema OK (users, sessions, comunidad, billing).");
+    console.log(
+      "[Calmward API] Esquema OK (users, sessions, comunidad, billing, sponsor_ads)."
+    );
 
+    // Asegura que tu cuenta principal sea admin
     await pool.query(
       `
         UPDATE users
@@ -160,7 +188,9 @@ async function ensureSchema() {
         WHERE LOWER(email) = 'calmward.contact@gmail.com'
       `
     );
-    console.log("[Calmward API] Usuario calmward.contact@gmail.com marcado como admin (si existe).");
+    console.log(
+      "[Calmward API] Usuario calmward.contact@gmail.com marcado como admin (si existe)."
+    );
   } catch (err) {
     console.error("[Calmward API] Error creando esquema:", err);
   }
@@ -171,6 +201,7 @@ if (pool) {
     console.error("[Calmward API] Error en ensureSchema:", e)
   );
 }
+
 
 // ===================== HELPERS GENERALES =====================
 
@@ -841,7 +872,9 @@ function isAdminUser(u) {
 app.get("/admin/users", async (req, res) => {
   const auth = await getUserFromRequestOrThrow(req, res);
   if (!auth) return;
-  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
+  if (!isAdminUser(auth.user)) {
+    return res.status(403).json({ error: "No autorizado." });
+  }
 
   const q = await pool.query(
     `
@@ -861,72 +894,70 @@ app.get("/admin/users", async (req, res) => {
   res.json({ users: q.rows });
 });
 
+/**
+ * PATCH /admin/users/:id
+ * Permite al admin modificar flags de cualquier usuario:
+ * - is_admin
+ * - is_sponsor
+ * - is_premium
+ * - is_banned
+ * - community_banned
+ *
+ * Devuelve el usuario actualizado en { ok: true, user: {...} }
+ */
 app.patch("/admin/users/:id", async (req, res) => {
   try {
-    // 1) Comprobamos sesión + que sea admin
     const auth = await getUserFromRequestOrThrow(req, res);
     if (!auth) return;
     if (!isAdminUser(auth.user)) {
       return res.status(403).json({ error: "No autorizado." });
     }
 
-    if (!pool) {
-      return res
-        .status(500)
-        .json({ error: "Base de datos no configurada en el servidor." });
-    }
-
-    // 2) ID de usuario a editar
-    const userId = Number(req.params.id);
-    if (!Number.isFinite(userId)) {
+    const userId = parseInt(req.params.id, 10);
+    if (!userId || Number.isNaN(userId)) {
       return res.status(400).json({ error: "ID de usuario inválido." });
     }
 
-    // 3) Campos que el panel admin puede cambiar
-    const {
-      is_admin,
-      is_sponsor,
-      is_premium,
-      community_banned,
-      is_banned,
-    } = req.body || {};
+    const body = req.body || {};
 
-    const fields = [];
+    // helper para normalizar booleanos
+    function toBool(v) {
+      return v === true || v === "true" || v === 1 || v === "1";
+    }
+
+    const allowedKeys = [
+      "is_admin",
+      "is_sponsor",
+      "is_premium",
+      "is_banned",
+      "community_banned",
+    ];
+
+    const setClauses = [];
     const values = [];
     let idx = 1;
 
-    function addField(column, value) {
-      fields.push(`${column} = $${idx++}`);
-      values.push(value);
+    for (const key of allowedKeys) {
+      if (Object.prototype.hasOwnProperty.call(body, key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(toBool(body[key]));
+        idx++;
+      }
     }
 
-    if (typeof is_admin === "boolean") {
-      addField("is_admin", is_admin);
-    }
-    if (typeof is_sponsor === "boolean") {
-      addField("is_sponsor", is_sponsor);
-    }
-    if (typeof is_premium === "boolean") {
-      addField("is_premium", is_premium);
-    }
-    if (typeof community_banned === "boolean") {
-      addField("community_banned", community_banned);
-    }
-    if (typeof is_banned === "boolean") {
-      addField("is_banned", is_banned);
+    if (setClauses.length === 0) {
+      return res.status(400).json({
+        error:
+          "No se ha enviado ningún campo modificable. Usa is_admin, is_sponsor, is_premium, is_banned o community_banned.",
+      });
     }
 
-    if (!fields.length) {
-      return res.status(400).json({ error: "No hay cambios que aplicar." });
-    }
-
-    // 4) Ejecutar el UPDATE
     values.push(userId);
 
     const q = await pool.query(
       `
         UPDATE users
-        SET ${fields.join(", ")}
+        SET ${setClauses.join(", ")}
         WHERE id = $${idx}
         RETURNING
           id, email,
@@ -941,7 +972,7 @@ app.patch("/admin/users/:id", async (req, res) => {
       values
     );
 
-    if (q.rows.length === 0) {
+    if (!q.rows.length) {
       return res.status(404).json({ error: "Usuario no encontrado." });
     }
 
@@ -950,14 +981,16 @@ app.patch("/admin/users/:id", async (req, res) => {
     console.error("Error en PATCH /admin/users/:id", err);
     return res
       .status(500)
-      .json({ error: "Error interno al actualizar usuario." });
+      .json({ error: "No se ha podido actualizar el usuario." });
   }
 });
 
 app.get("/admin/posts", async (req, res) => {
   const auth = await getUserFromRequestOrThrow(req, res);
   if (!auth) return;
-  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
+  if (!isAdminUser(auth.user)) {
+    return res.status(403).json({ error: "No autorizado." });
+  }
 
   const q = await pool.query(
     `SELECT p.id, p.body, p.created_at, p.flagged_toxic, p.is_sponsored, p.user_id, u.email
@@ -971,7 +1004,9 @@ app.get("/admin/posts", async (req, res) => {
 app.post("/admin/ban/:id", async (req, res) => {
   const auth = await getUserFromRequestOrThrow(req, res);
   if (!auth) return;
-  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
+  if (!isAdminUser(auth.user)) {
+    return res.status(403).json({ error: "No autorizado." });
+  }
 
   await pool.query("UPDATE users SET community_banned = TRUE WHERE id = $1", [
     req.params.id,
@@ -982,7 +1017,9 @@ app.post("/admin/ban/:id", async (req, res) => {
 app.post("/admin/unban/:id", async (req, res) => {
   const auth = await getUserFromRequestOrThrow(req, res);
   if (!auth) return;
-  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
+  if (!isAdminUser(auth.user)) {
+    return res.status(403).json({ error: "No autorizado." });
+  }
 
   await pool.query("UPDATE users SET community_banned = FALSE WHERE id = $1", [
     req.params.id,
@@ -993,11 +1030,190 @@ app.post("/admin/unban/:id", async (req, res) => {
 app.delete("/admin/posts/:id", async (req, res) => {
   const auth = await getUserFromRequestOrThrow(req, res);
   if (!auth) return;
-  if (!isAdminUser(auth.user)) return res.status(403).json({ error: "No autorizado." });
+  if (!isAdminUser(auth.user)) {
+    return res.status(403).json({ error: "No autorizado." });
+  }
 
-  await pool.query("DELETE FROM community_posts WHERE id = $1", [req.params.id]);
+  await pool.query("DELETE FROM community_posts WHERE id = $1", [
+    req.params.id,
+  ]);
   res.json({ ok: true });
 });
+
+/* ================= SPONSOR ADS (CARRUSEL) ================= */
+
+// Anuncios que se mostrarán en el carrusel de Inicio
+app.get("/sponsors/ads", async (_req, res) => {
+  try {
+    if (!pool) {
+      return res.status(500).json({ error: "Base de datos no disponible." });
+    }
+
+    const q = await pool.query(
+      `
+        SELECT
+          a.id,
+          a.brand_name,
+          a.tagline,
+          a.description,
+          a.cta,
+          a.url,
+          a.image_url,
+          a.is_active,
+          a.created_at,
+          a.updated_at,
+          u.id AS user_id,
+          u.email,
+          u.is_sponsor
+        FROM sponsor_ads a
+        JOIN users u ON u.id = a.user_id
+        WHERE a.is_active = TRUE
+          AND u.is_sponsor = TRUE
+        ORDER BY a.created_at DESC
+      `
+    );
+
+    const ads = q.rows || [];
+    return res.json({ ok: true, ads });
+  } catch (err) {
+    console.error("Error en GET /sponsors/ads", err);
+    return res
+      .status(500)
+      .json({ error: "No se han podido cargar los anuncios patrocinados." });
+  }
+});
+
+// Ver anuncio del patrocinador logueado
+app.get("/sponsors/my-ad", async (req, res) => {
+  try {
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+    const u = auth.user;
+
+    if (!u.is_sponsor) {
+      return res.status(403).json({
+        error:
+          "Tu cuenta no tiene patrocinio activo. Contrata un plan de patrocinio para crear tu anuncio.",
+      });
+    }
+
+    const q = await pool.query(
+      `
+        SELECT
+          id,
+          brand_name,
+          tagline,
+          description,
+          cta,
+          url,
+          image_url,
+          is_active,
+          created_at,
+          updated_at
+        FROM sponsor_ads
+        WHERE user_id = $1
+        LIMIT 1
+      `,
+      [u.id]
+    );
+
+    if (!q.rows.length) {
+      return res.json({ ok: true, ad: null });
+    }
+
+    return res.json({ ok: true, ad: q.rows[0] });
+  } catch (err) {
+    console.error("Error en GET /sponsors/my-ad", err);
+    return res
+      .status(500)
+      .json({ error: "No se ha podido cargar tu anuncio." });
+  }
+});
+
+// Crear / actualizar anuncio del patrocinador logueado
+app.post("/sponsors/my-ad", async (req, res) => {
+  try {
+    const auth = await getUserFromRequestOrThrow(req, res);
+    if (!auth) return;
+    const u = auth.user;
+
+    if (!u.is_sponsor) {
+      return res.status(403).json({
+        error:
+          "Tu cuenta no tiene patrocinio activo. Contrata un plan de patrocinio para crear tu anuncio.",
+      });
+    }
+
+    if (!pool) {
+      return res.status(500).json({ error: "Base de datos no disponible." });
+    }
+
+    const body = req.body || {};
+    const brandName = String(body.brandName || body.brand_name || "").trim();
+    const tagline = String(body.tagline || "").trim();
+    const description = String(body.description || "").trim();
+    const cta = String(body.cta || "").trim();
+    const url = String(body.url || "").trim();
+    const imageUrl = String(body.imageUrl || body.image_url || "").trim();
+    const isActive =
+      body.isActive === false || body.is_active === false ? false : true;
+
+    if (!brandName || !url) {
+      return res.status(400).json({
+        error:
+          "Faltan datos obligatorios. Indica al menos nombre de marca y URL de destino.",
+      });
+    }
+
+    const q = await pool.query(
+      `
+        INSERT INTO sponsor_ads (
+          user_id,
+          brand_name,
+          tagline,
+          description,
+          cta,
+          url,
+          image_url,
+          is_active,
+          created_at,
+          updated_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+          brand_name = EXCLUDED.brand_name,
+          tagline = EXCLUDED.tagline,
+          description = EXCLUDED.description,
+          cta = EXCLUDED.cta,
+          url = EXCLUDED.url,
+          image_url = EXCLUDED.image_url,
+          is_active = EXCLUDED.is_active,
+          updated_at = NOW()
+        RETURNING
+          id,
+          brand_name,
+          tagline,
+          description,
+          cta,
+          url,
+          image_url,
+          is_active,
+          created_at,
+          updated_at
+      `,
+      [u.id, brandName, tagline, description, cta, url, imageUrl, isActive]
+    );
+
+    return res.json({ ok: true, ad: q.rows[0] });
+  } catch (err) {
+    console.error("Error en POST /sponsors/my-ad", err);
+    return res
+      .status(500)
+      .json({ error: "No se ha podido guardar tu anuncio." });
+  }
+});
+
 
 /* ================= BILLING / PAYPAL (SUBSCRIPTIONS + WEBHOOK) ================= */
 

@@ -102,42 +102,50 @@ function useAuth() {
 
 // ---------- DATOS DE PATROCINIOS (CARRUSEL) ----------
 
-type Sponsor = {
+type SponsorAd = {
   id: string;
-  name: string;
+  kind: "real" | "cta";
+  brandName: string;
   tagline: string;
   description: string;
   cta: string;
-  url: string;
+  url?: string | null;
+  imageUrl?: string | null;
 };
 
-const SPONSORS: Sponsor[] = [
+const CTA_CARDS: SponsorAd[] = [
   {
-    id: "mindspace",
-    name: "Mindspace Diario",
-    tagline: "Cuadernos para escribir lo que no dices en voz alta.",
+    id: "cta-announce-1",
+    kind: "cta",
+    brandName: "Anúnciate en Calmward",
+    tagline: "Tu proyecto puede estar aquí.",
     description:
-      "Marca imaginaria de papelería que apoya proyectos relacionados con el bienestar emocional y el hábito de escribir.",
-    cta: "Ejemplo de marca que colabora con Calmward.",
-    url: "https://www.ejemplo.com/mindspace",
+      "Si trabajas en bienestar emocional, autocuidado, terapia online o apps tranquilas, este espacio es para ti.",
+    cta: "Descubre cómo patrocinarte",
+    url: null,
+    imageUrl: null,
   },
   {
-    id: "calmtea",
-    name: "CalmTea Blends",
-    tagline: "Infusiones suaves para ratos de calma.",
+    id: "cta-announce-2",
+    kind: "cta",
+    brandName: "Tu app dentro de Calmward",
+    tagline: "Personas que ya se cuidan pueden conocer tu proyecto.",
     description:
-      "Pequeña marca ficticia que se enfoca en momentos tranquilos, rutinas nocturnas y autocuidado sin prisas.",
-    cta: "Este espacio podría mostrar beneficios especiales para quienes usan Calmward.",
-    url: "https://www.ejemplo.com/calmtea",
+      "Patrocinio discreto, sin anuncios agresivos. Solo presencia en el carrusel de Inicio.",
+    cta: "Más info dentro de la app",
+    url: null,
+    imageUrl: null,
   },
   {
-    id: "respiraapp",
-    name: "RespiraApp Studio",
-    tagline: "Proyectos digitales centrados en salud emocional.",
+    id: "cta-announce-3",
+    kind: "cta",
+    brandName: "Marca relacionada con bienestar",
+    tagline: "Infusiones, cuadernos, apps, podcasts…",
     description:
-      "Estudio digital que apoya herramientas que cuidan de la mente, no solo del rendimiento.",
-    cta: "Un patrocinio aquí ayuda a que más personas conozcan tu proyecto.",
-    url: "https://www.ejemplo.com/respiraapp",
+      "Este hueco es para proyectos que suman calma, no ruido.",
+    cta: "Reserva tu espacio",
+    url: null,
+    imageUrl: null,
   },
 ];
 
@@ -525,7 +533,8 @@ function HomeScreen({ navigation }: any) {
   const scrollRef = useRef<ScrollView | null>(null);
   const CARD_WIDTH = width * 0.8;
   const CARD_SPACING = 12;
-
+  const [remoteAds, setRemoteAds] = useState<SponsorAd[]>([]);
+  
   async function touchActivity() {
     try {
       await AsyncStorage.setItem(
@@ -537,12 +546,12 @@ function HomeScreen({ navigation }: any) {
     }
   }
 
-  useEffect(() => {
-    if (SPONSORS.length <= 1) return;
+    useEffect(() => {
+    if (adsToShow.length <= 1) return;
     const intervalId = setInterval(() => {
       const fullWidth = CARD_WIDTH + CARD_SPACING;
       setSponsorIndex((prev) => {
-        const next = (prev + 1) % SPONSORS.length;
+        const next = (prev + 1) % adsToShow.length;
         if (scrollRef.current) {
           scrollRef.current.scrollTo({
             x: next * fullWidth,
@@ -553,32 +562,85 @@ function HomeScreen({ navigation }: any) {
       });
     }, 8000);
     return () => clearInterval(intervalId);
-  }, [CARD_WIDTH]);
+  }, [CARD_WIDTH, adsToShow.length]);
 
-  function handleScrollEnd(e: any) {
+
+    function handleScrollEnd(e: any) {
     const fullWidth = CARD_WIDTH + CARD_SPACING;
     const offsetX = e.nativeEvent.contentOffset.x;
     const index = Math.round(offsetX / fullWidth);
-    const safeIndex = Math.max(0, Math.min(index, SPONSORS.length - 1));
+    const safeIndex = Math.max(0, Math.min(index, adsToShow.length - 1));
     setSponsorIndex(safeIndex);
   }
+  
+  async function loadSponsorAds() {
+    if (!API_BASE_URL) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/sponsors/ads`);
+      if (!res.ok) {
+        console.log(
+          "No se han podido cargar anuncios patrocinados, uso CTA locales."
+        );
+        return;
+      }
+      const data = await res.json();
+      const list = Array.isArray(data?.ads) ? data.ads : [];
+      const mapped: SponsorAd[] = list.map((item: any, index: number) => ({
+        id: String(item.id ?? `remote-${index}`),
+        kind: "real",
+        brandName: String(
+          item.brand_name || item.brandName || "Anuncio Calmward"
+        ),
+        tagline:
+          String(item.tagline || "").trim() ||
+          "Proyecto relacionado con bienestar emocional.",
+        description:
+          String(item.description || "").trim() ||
+          "Anuncio de un proyecto que apoya el bienestar emocional.",
+        cta: String(item.cta || "Ver más"),
+        url: item.url || null,
+        imageUrl: item.image_url || item.imageUrl || null,
+      }));
+      setRemoteAds(mapped);
+    } catch (e) {
+      console.log("Error cargando anuncios patrocinados", e);
+    }
+  }
 
-  async function handleSponsorOpen(sponsor: Sponsor) {
+  useEffect(() => {
+    loadSponsorAds();
+  }, []);
+
+    async function handleSponsorOpen(ad: SponsorAd) {
     await touchActivity();
-    if (!sponsor.url) {
+
+    // CTA local -> ir al flujo de patrocinio
+    if (ad.kind === "cta") {
+      const parentNav = navigation.getParent?.() || navigation;
+      if (!isLogged) {
+        parentNav.navigate("Auth");
+        return;
+      }
+      parentNav.navigate("SponsorPayment");
+      return;
+    }
+
+    // Anuncio real -> abrir URL
+    if (!ad.url) {
       Alert.alert(
         "Patrocinio sin enlace",
         "Este patrocinio todavía no tiene un enlace configurado."
       );
       return;
     }
-    Linking.openURL(sponsor.url).catch(() => {
+    Linking.openURL(ad.url).catch(() => {
       Alert.alert(
         "No se pudo abrir el enlace",
         "Revisa que la URL del patrocinio es correcta."
       );
     });
   }
+
 
   async function handleSponsorPayment() {
     await touchActivity();
@@ -592,6 +654,15 @@ function HomeScreen({ navigation }: any) {
 
     parentNav.navigate("SponsorPayment");
   }
+
+  const adsToShow: SponsorAd[] = useMemo(() => {
+    if (remoteAds.length === 0) {
+      // Solo CTA locales si no hay anuncios reales
+      return CTA_CARDS;
+    }
+    // Hay anuncios reales: todos los reales + 1 CTA al final
+    return [...remoteAds, { ...CTA_CARDS[0], id: "cta-final" }];
+  }, [remoteAds]);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -608,50 +679,67 @@ function HomeScreen({ navigation }: any) {
           </View>
 
           <ScrollView
-            ref={scrollRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            snapToInterval={CARD_WIDTH + CARD_SPACING}
-            decelerationRate="fast"
-            onMomentumScrollEnd={handleScrollEnd}
-            contentContainerStyle={{ paddingRight: 4 }}
-          >
-            {SPONSORS.map((s, idx) => (
-              <TouchableOpacity
-                key={s.id}
-                activeOpacity={0.9}
-                style={[
-                  styles.sponsorItemCard,
-                  {
-                    width: CARD_WIDTH,
-                    marginRight:
-                      idx === SPONSORS.length - 1 ? 0 : CARD_SPACING,
-                  },
-                ]}
-                onPress={() => handleSponsorOpen(s)}
-              >
-                <Text style={styles.sponsorName}>{s.name}</Text>
-                <Text style={styles.sponsorTagline}>{s.tagline}</Text>
-                <Text style={styles.sponsorSmall}>{s.description}</Text>
-                <Text style={styles.sponsorCta}>{s.cta}</Text>
-                <Text style={styles.sponsorLinkHint}>
-                  Toca para ir a su enlace
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+			ref={scrollRef}
+			horizontal
+			showsHorizontalScrollIndicator={false}
+			snapToInterval={CARD_WIDTH + CARD_SPACING}
+			decelerationRate="fast"
+			onMomentumScrollEnd={handleScrollEnd}
+			contentContainerStyle={{ paddingRight: 4 }}
+			>
+			{adsToShow.map((ad, idx) => (
+				<TouchableOpacity
+				key={ad.id}
+				activeOpacity={0.9}
+				style={[
+					styles.sponsorItemCard,
+					{
+					width: CARD_WIDTH,
+					marginRight:
+						idx === adsToShow.length - 1 ? 0 : CARD_SPACING,
+					},
+				]}
+				onPress={() => handleSponsorOpen(ad)}
+				>
+				{ad.imageUrl ? (
+					<Image
+					source={{ uri: ad.imageUrl }}
+					style={styles.sponsorImage}
+					resizeMode="cover"
+					/>
+				) : null}
 
-          <View style={styles.sponsorDotsRow}>
-            {SPONSORS.map((s, idx) => (
-              <View
-                key={s.id}
-                style={[
-                  styles.sponsorDot,
-                  idx === sponsorIndex && styles.sponsorDotActive,
-                ]}
-              />
-            ))}
-          </View>
+				<Text style={styles.sponsorName}>{ad.brandName}</Text>
+				<Text style={styles.sponsorTagline}>{ad.tagline}</Text>
+				<Text style={styles.sponsorSmall}>{ad.description}</Text>
+				<Text style={styles.sponsorCta}>{ad.cta}</Text>
+
+				{ad.kind === "real" ? (
+					<Text style={styles.sponsorLinkHint}>
+					Toca para ir a su enlace
+					</Text>
+				) : (
+					<Text style={styles.sponsorLinkHint}>
+					Toca para ver cómo patrocinarte en Calmward
+					</Text>
+				)}
+				</TouchableOpacity>
+				))}
+			</ScrollView>
+
+
+        <View style={styles.sponsorDotsRow}>
+		{adsToShow.map((ad, idx) => (
+			<View
+			key={ad.id}
+			style={[
+				styles.sponsorDot,
+				idx === sponsorIndex && styles.sponsorDotActive,
+			]}
+			/>
+		))}
+		</View>
+
         </View>
 
         {/* BLOQUE: QUÉ ES CALMWARD */}
@@ -1759,6 +1847,12 @@ function ProfileScreen({ navigation }: any) {
     });
   }
 
+  function goToSponsorAdManage() {
+    if (!isSponsor) return;
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("SponsorAdManage");
+  }
+
   function goToSponsorStats() {
     if (!isSponsor) return;
     const parentNav = navigation.getParent?.() || navigation;
@@ -1889,6 +1983,16 @@ function ProfileScreen({ navigation }: any) {
             Ver estadísticas de patrocinio
           </Text>
         </TouchableOpacity>
+		
+		    <TouchableOpacity
+      style={styles.sponsorStatsBtn}
+      onPress={goToSponsorAdManage}
+    >
+      <Text style={styles.sponsorStatsBtnText}>
+        Gestionar mi anuncio en el carrusel
+      </Text>
+    </TouchableOpacity>
+
       </>
     ) : (
       <Text style={styles.sectionBody}>
@@ -2267,6 +2371,286 @@ function SponsorStatsScreen({ navigation }: any) {
               Tu cuenta no tiene un patrocinio activo. Vuelve atrás y revisa
               la pantalla de Inicio para ver cómo patrocinar Calmward.
             </Text>
+          )}
+        </View>
+
+        <AppFooter />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function SponsorAdManageScreen({ navigation }: any) {
+  const { authToken, isSponsor } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [brandName, setBrandName] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [description, setDescription] = useState("");
+  const [cta, setCta] = useState("");
+  const [url, setUrl] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [isActive, setIsActive] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      if (!API_BASE_URL || !authToken || !isSponsor) {
+        setLoading(false);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE_URL}/sponsors/my-ad`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) {
+          setLoading(false);
+          return;
+        }
+        const data = await res.json();
+        if (!active) return;
+
+        if (data && data.ad) {
+          const ad = data.ad;
+          setBrandName(ad.brand_name || ad.brandName || "");
+          setTagline(ad.tagline || "");
+          setDescription(ad.description || "");
+          setCta(ad.cta || "");
+          setUrl(ad.url || "");
+          setImageUrl(ad.image_url || ad.imageUrl || "");
+          if (typeof ad.is_active === "boolean") {
+            setIsActive(ad.is_active);
+          }
+        }
+      } catch (e) {
+        console.log("Error cargando mi anuncio", e);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      active = false;
+    };
+  }, [authToken, isSponsor]);
+
+  async function handleSave() {
+    if (!API_BASE_URL || !authToken) {
+      Alert.alert(
+        "Servidor no disponible",
+        "No se puede guardar el anuncio ahora mismo."
+      );
+      return;
+    }
+
+    if (!brandName.trim() || !url.trim()) {
+      Alert.alert(
+        "Faltan datos",
+        "Añade como mínimo el nombre de la marca y la URL del proyecto."
+      );
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/sponsors/my-ad`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          brandName: brandName.trim(),
+          tagline: tagline.trim(),
+          description: description.trim(),
+          cta: cta.trim(),
+          url: url.trim(),
+          imageUrl: imageUrl.trim(),
+          isActive,
+        }),
+      });
+
+      if (!res.ok) {
+        let msg = "No se ha podido guardar el anuncio.";
+        try {
+          const data = await res.json();
+          if (data && typeof data.error === "string" && data.error.trim()) {
+            msg = data.error.trim();
+          }
+        } catch {}
+        Alert.alert("Error", msg);
+        return;
+      }
+
+      Alert.alert(
+        "Anuncio guardado",
+        "Tu anuncio se ha guardado. Si tu patrocinio está activo, aparecerá en el carrusel."
+      );
+
+      const parent = navigation.getParent?.() || navigation;
+      parent.navigate("Inicio");
+    } catch (e) {
+      console.log("Error guardando anuncio", e);
+      Alert.alert(
+        "Error de conexión",
+        "No se ha podido guardar el anuncio ahora mismo."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!isSponsor) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <AppHeader navigation={navigation} />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Anuncio patrocinado</Text>
+            <Text style={styles.sectionBody}>
+              Esta sección solo está disponible para cuentas patrocinadoras activas.
+            </Text>
+          </View>
+          <AppFooter />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <AppHeader navigation={navigation} />
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Tu anuncio en Calmward</Text>
+          <Text style={styles.sectionBody}>
+            Aquí configuras el contenido que aparecerá en el carrusel de Inicio
+            cuando tu patrocinio esté activo.
+          </Text>
+
+          {loading ? (
+            <View style={{ paddingVertical: 12 }}>
+              <ActivityIndicator size="small" color="#0EA5E9" />
+            </View>
+          ) : (
+            <>
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                Nombre de marca
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={brandName}
+                onChangeText={setBrandName}
+                placeholder="Ej: Mindspace Diario"
+                placeholderTextColor="#9CA3AF"
+              />
+
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                Frase corta / tagline
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={tagline}
+                onChangeText={setTagline}
+                placeholder="Ej: Cuadernos para escribir lo que no dices en voz alta."
+                placeholderTextColor="#9CA3AF"
+              />
+
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                Descripción
+              </Text>
+              <TextInput
+                style={styles.dayInput}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Cuenta brevemente qué ofrece tu proyecto..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+              />
+
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                Texto del botón / CTA
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={cta}
+                onChangeText={setCta}
+                placeholder="Ej: Ver más detalles"
+                placeholderTextColor="#9CA3AF"
+              />
+
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                URL de destino
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={url}
+                onChangeText={setUrl}
+                placeholder="https://tu-sitio-o-app.com"
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="none"
+              />
+
+              <Text style={[styles.label, { marginTop: 12 }]}>
+                URL de imagen (opcional)
+              </Text>
+              <Text style={styles.settingsHint}>
+                De momento Calmward solo acepta una URL de imagen ya subida
+                (por ejemplo, a tu web, CDN, etc.).
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={imageUrl}
+                onChangeText={setImageUrl}
+                placeholder="https://tu-sitio.com/mi-banner.png"
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="none"
+              />
+
+              <View
+                style={{
+                  marginTop: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => setIsActive((v) => !v)}
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 4,
+                    borderWidth: 1,
+                    borderColor: "#D1D5DB",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginRight: 8,
+                    backgroundColor: isActive ? "#0EA5E9" : "#FFFFFF",
+                  }}
+                >
+                  {isActive && (
+                    <Text style={{ color: "#FFFFFF", fontSize: 14 }}>✓</Text>
+                  )}
+                </TouchableOpacity>
+                <Text style={{ fontSize: 13, color: "#4B5563" }}>
+                  Mostrar este anuncio en el carrusel mientras tu patrocinio
+                  esté activo.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.paymentConfirmButton}
+                onPress={handleSave}
+                disabled={saving}
+              >
+                <Text style={styles.paymentConfirmButtonText}>
+                  {saving ? "Guardando..." : "Guardar anuncio"}
+                </Text>
+              </TouchableOpacity>
+            </>
           )}
         </View>
 
@@ -2711,78 +3095,40 @@ function AdminPanelScreen({ navigation }: any) {
     loadAll();
   }, [isAdmin, authToken]);
 
-async function fetchWithTimeout(url: string, options: any = {}, ms = 20000) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), ms);
-
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    return res;
-  } finally {
-    clearTimeout(id);
-  }
-}
-
   async function loadAll() {
-  if (!API_BASE_URL || !authToken) return;
-
-  try {
-    setLoading(true);
-
-    const headers = { Authorization: `Bearer ${authToken}` };
-
-    const [uRes, pRes] = await Promise.all([
-      fetchWithTimeout(`${API_BASE_URL}/admin/users`, { headers }, 20000),
-      fetchWithTimeout(`${API_BASE_URL}/admin/posts`, { headers }, 20000),
-    ]);
-
-    if (uRes && uRes.ok) {
-      const data = await uRes.json();
-      setUsers(Array.isArray(data?.users) ? data.users : []);
-    }
-
-    if (pRes && pRes.ok) {
-      const data = await pRes.json();
-      setPosts(Array.isArray(data?.posts) ? data.posts : []);
-    }
-  } catch (e) {
-    console.log("Admin load timeout/cold start", e);
-    Alert.alert(
-      "Servidor iniciándose",
-      "El backend puede estar despertando en Render. Espera unos segundos y pulsa “Actualizar datos”."
-    );
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-}
-
-
-  async function handleToggleBan(u: AdminUser) {
     if (!API_BASE_URL || !authToken) return;
-    const current = !!u.community_banned;
-    const endpoint = current ? "unban" : "ban";
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/${endpoint}/${u.id}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-      });
-      if (!res.ok) {
-        Alert.alert(
-          "Error",
-          "No se ha podido actualizar el estado de la cuenta."
-        );
-        return;
+      setLoading(true);
+      const [uRes, pRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/admin/users`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+        }),
+        fetch(`${API_BASE_URL}/admin/posts`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+        }),
+      ]);
+
+      if (uRes.ok) {
+        const data = await uRes.json();
+        setUsers(Array.isArray(data?.users) ? data.users : []);
       }
-      setUsers((prev) =>
-        prev.map((usr) =>
-          usr.id === u.id ? { ...usr, community_banned: !current } : usr
-        )
-      );
+      if (pRes.ok) {
+        const data = await pRes.json();
+        setPosts(Array.isArray(data?.posts) ? data.posts : []);
+      }
     } catch (e) {
-      console.log("Error al cambiar ban comunidad", e);
+      console.log("Error cargando datos admin", e);
+      Alert.alert(
+        "Error",
+        "No se han podido cargar los datos del panel de administración."
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -2827,6 +3173,64 @@ async function fetchWithTimeout(url: string, options: any = {}, ms = 20000) {
   async function handleRefresh() {
     setRefreshing(true);
     await loadAll();
+  }
+
+  async function updateUserFlags(
+    u: AdminUser,
+    patch: { [key: string]: any }
+  ) {
+    if (!API_BASE_URL || !authToken) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        Alert.alert(
+          "Error",
+          "No se ha podido actualizar el usuario."
+        );
+        return;
+      }
+      const data = await res.json();
+      const updated = data?.user;
+      if (!updated) return;
+      setUsers((prev) =>
+        prev.map((usr) =>
+          usr.id === u.id ? { ...usr, ...updated } : usr
+        )
+      );
+    } catch (e) {
+      console.log("Error actualizando usuario en admin", e);
+      Alert.alert(
+        "Error",
+        "No se ha podido actualizar el usuario."
+      );
+    }
+  }
+
+  async function toggleCommunityBan(u: AdminUser) {
+    await updateUserFlags(u, { community_banned: !u.community_banned });
+  }
+
+  async function toggleIsBanned(u: AdminUser) {
+    await updateUserFlags(u, { is_banned: !u.is_banned });
+  }
+
+  async function toggleAdmin(u: AdminUser) {
+    await updateUserFlags(u, { is_admin: !u.is_admin });
+  }
+
+  async function toggleSponsor(u: AdminUser) {
+    await updateUserFlags(u, { is_sponsor: !u.is_sponsor });
+  }
+
+  async function togglePremium(u: AdminUser) {
+    await updateUserFlags(u, { is_premium: !u.is_premium });
   }
 
   if (!isAdmin) {
@@ -2930,37 +3334,142 @@ async function fetchWithTimeout(url: string, options: any = {}, ms = 20000) {
                     {u.email}
                   </Text>
                   <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                    ID: {u.id} · Patrocinador: {u.is_sponsor ? "Sí" : "No"}
+                    ID: {u.id}
                   </Text>
-                  <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                    Baneado comunidad: {u.community_banned ? "Sí" : "No"}
-                  </Text>
-
-                  <TouchableOpacity
-                    onPress={() => handleToggleBan(u)}
+                  <Text
                     style={{
-                      marginTop: 6,
-                      alignSelf: "flex-start",
-                      paddingHorizontal: 10,
-                      paddingVertical: 6,
-                      borderRadius: 999,
-                      backgroundColor: u.community_banned
-                        ? "#22C55E"
-                        : "#DC2626",
+                      fontSize: 12,
+                      color: "#6B7280",
+                      marginTop: 4,
                     }}
                   >
-                    <Text
+                    Admin: {u.is_admin ? "Sí" : "No"} · Cuenta bloqueada:{" "}
+                    {u.is_banned ? "Sí" : "No"} · Comunidad bloqueada:{" "}
+                    {u.community_banned ? "Sí" : "No"}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: "#6B7280" }}>
+                    Sponsor: {u.is_sponsor ? "Sí" : "No"} · Premium:{" "}
+                    {u.is_premium ? "Sí" : "No"}
+                  </Text>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      marginTop: 8,
+                      gap: 6,
+                    } as any}
+                  >
+                    <TouchableOpacity
+                      onPress={() => toggleAdmin(u)}
                       style={{
-                        fontSize: 12,
-                        color: "#FFFFFF",
-                        fontWeight: "600",
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: u.is_admin ? "#0EA5E9" : "#E5E7EB",
                       }}
                     >
-                      {u.community_banned
-                        ? "Desbloquear comunidad"
-                        : "Bloquear comunidad"}
-                    </Text>
-                  </TouchableOpacity>
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: u.is_admin ? "#FFFFFF" : "#111827",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {u.is_admin ? "Quitar admin" : "Hacer admin"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => toggleSponsor(u)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: u.is_sponsor
+                          ? "#0F766E"
+                          : "#E5E7EB",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: u.is_sponsor ? "#FFFFFF" : "#111827",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {u.is_sponsor ? "Quitar sponsor" : "Marcar sponsor"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => togglePremium(u)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: u.is_premium
+                          ? "#7C3AED"
+                          : "#E5E7EB",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: u.is_premium ? "#FFFFFF" : "#111827",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {u.is_premium ? "Quitar premium" : "Marcar premium"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => toggleIsBanned(u)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: u.is_banned ? "#22C55E" : "#DC2626",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: "#FFFFFF",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {u.is_banned
+                          ? "Desbloquear cuenta"
+                          : "Bloquear cuenta"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => toggleCommunityBan(u)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: u.community_banned
+                          ? "#22C55E"
+                          : "#DC2626",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: "#FFFFFF",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {u.community_banned
+                          ? "Desbloquear comunidad"
+                          : "Bloquear comunidad"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ))}
 
@@ -2990,14 +3499,22 @@ async function fetchWithTimeout(url: string, options: any = {}, ms = 20000) {
                   </Text>
                   {p.email && (
                     <Text
-                      style={{ fontSize: 11, color: "#6B7280", marginTop: 4 }}
+                      style={{
+                        fontSize: 11,
+                        color: "#6B7280",
+                        marginTop: 4,
+                      }}
                     >
                       Autor: {p.email || "Anónimo"}
                     </Text>
                   )}
                   {p.created_at && (
                     <Text
-                      style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}
+                      style={{
+                        fontSize: 11,
+                        color: "#9CA3AF",
+                        marginTop: 2,
+                      }}
                     >
                       {new Date(p.created_at).toLocaleString()}
                     </Text>
@@ -3040,6 +3557,7 @@ async function fetchWithTimeout(url: string, options: any = {}, ms = 20000) {
     </SafeAreaView>
   );
 }
+
 
 // ---------- TABS PRINCIPALES ----------
 
@@ -3333,6 +3851,7 @@ async function refreshBilling() {
         <Stack.Screen name="Legal" component={LegalScreen} />
         <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
         <Stack.Screen name="SponsorPayment" component={SponsorPaymentScreen} />
+		<Stack.Screen name="SponsorAdManage" component={SponsorAdManageScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="AdminPanel" component={AdminPanelScreen} />
       </Stack.Navigator>
@@ -3780,6 +4299,13 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
+  },
+  sponsorImage: {
+    width: "100%",
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: "#E5E7EB",
+    marginBottom: 6,
   },
   sponsorName: {
     marginTop: 2,
