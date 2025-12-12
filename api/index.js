@@ -1303,6 +1303,214 @@ function computeValidUntil(planKey) {
   return d;
 }
 
+/* ================= SPONSOR ADS (CARRUSEL DE ANUNCIOS) ================= */
+
+// OJO: esto usa isSponsorActive(u) que ya tienes definido para el billing.
+// No lo vuelvas a definir, solo reutilízalo aquí.
+
+app.get("/sponsor/ads", async (_req, res) => {
+  if (!pool) {
+    return res.json({ ads: [] });
+  }
+
+  try {
+    const q = await pool.query(
+      `
+      SELECT
+        a.id,
+        a.brand_name,
+        a.tagline,
+        a.description,
+        a.cta_label,
+        a.target_url,
+        a.image_url,
+        a.is_active,
+        a.updated_at,
+        u.is_sponsor,
+        u.sponsor_valid_until
+      FROM sponsor_ads a
+      JOIN users u ON u.id = a.user_id
+      WHERE a.is_active = TRUE
+        AND u.is_sponsor = TRUE
+        AND (
+          u.sponsor_valid_until IS NULL
+          OR u.sponsor_valid_until > NOW()
+        )
+      ORDER BY a.updated_at DESC
+      LIMIT 50
+      `
+    );
+
+    const items = (q.rows || []).map((row) => ({
+      id: row.id,
+      brandName: row.brand_name,
+      tagline: row.tagline,
+      description: row.description,
+      ctaLabel: row.cta_label,
+      targetUrl: row.target_url,
+      imageUrl: row.image_url,
+    }));
+
+    return res.json({ ads: items });
+  } catch (err) {
+    console.error("Error en /sponsor/ads:", err);
+    return res
+      .status(500)
+      .json({ error: "No se han podido cargar los anuncios." });
+  }
+});
+
+// Devuelve el anuncio del usuario actual (si es sponsor activo)
+app.get("/sponsor/my-ad", async (req, res) => {
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+
+  if (!isSponsorActive(auth.user)) {
+    return res.status(403).json({
+      error: "Necesitas tener un patrocinio activo para gestionar tu anuncio.",
+    });
+  }
+
+  try {
+    const q = await pool.query(
+      `
+      SELECT
+        id,
+        brand_name,
+        tagline,
+        description,
+        cta_label,
+        target_url,
+        image_url,
+        is_active
+      FROM sponsor_ads
+      WHERE user_id = $1
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [auth.user.id]
+    );
+
+    if (!q.rows.length) {
+      return res.json({ ad: null });
+    }
+
+    const row = q.rows[0];
+    return res.json({
+      ad: {
+        id: row.id,
+        brandName: row.brand_name,
+        tagline: row.tagline,
+        description: row.description,
+        ctaLabel: row.cta_label,
+        targetUrl: row.target_url,
+        imageUrl: row.image_url,
+        isActive: row.is_active,
+      },
+    });
+  } catch (err) {
+    console.error("Error en /sponsor/my-ad:", err);
+    return res
+      .status(500)
+      .json({ error: "No se ha podido cargar tu anuncio." });
+  }
+});
+
+// Crea o actualiza el anuncio del usuario sponsor
+app.post("/sponsor/my-ad", async (req, res) => {
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+
+  if (!isSponsorActive(auth.user)) {
+    return res.status(403).json({
+      error:
+        "Necesitas tener un patrocinio activo para crear o modificar tu anuncio.",
+    });
+  }
+
+  const {
+    brandName,
+    tagline,
+    description,
+    ctaLabel,
+    targetUrl,
+    imageUrl,
+    isActive,
+  } = req.body || {};
+
+  const bName = String(brandName || "").trim();
+  const tag = String(tagline || "").trim();
+  const desc = String(description || "").trim();
+  const cta = String(ctaLabel || "").trim() || "Más información";
+  const url = String(targetUrl || "").trim();
+  const img = String(imageUrl || "").trim();
+  const active = isActive === false ? false : true;
+
+  if (!bName || !desc) {
+    return res.status(400).json({
+      error:
+        "Faltan datos obligatorios: al menos nombre de marca y descripción.",
+    });
+  }
+
+  try {
+    const existing = await pool.query(
+      `
+      SELECT id
+      FROM sponsor_ads
+      WHERE user_id = $1
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [auth.user.id]
+    );
+
+    let adId;
+
+    if (existing.rows.length) {
+      adId = existing.rows[0].id;
+      await pool.query(
+        `
+        UPDATE sponsor_ads
+        SET
+          brand_name = $1,
+          tagline = $2,
+          description = $3,
+          cta_label = $4,
+          target_url = $5,
+          image_url = $6,
+          is_active = $7,
+          updated_at = NOW()
+        WHERE id = $8
+        `,
+        [bName, tag, desc, cta, url, img, active, adId]
+      );
+    } else {
+      const insert = await pool.query(
+        `
+        INSERT INTO sponsor_ads
+          (user_id, brand_name, tagline, description, cta_label, target_url, image_url, is_active)
+        VALUES
+          ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id
+        `,
+        [auth.user.id, bName, tag, desc, cta, url, img, active]
+      );
+      adId = insert.rows[0].id;
+    }
+
+    return res.json({
+      ok: true,
+      id: adId,
+    });
+  } catch (err) {
+    console.error("Error en POST /sponsor/my-ad:", err);
+    return res
+      .status(500)
+      .json({ error: "No se ha podido guardar tu anuncio." });
+  }
+});
+
 app.get("/billing/plans", async (_req, res) => {
   const plans = Object.keys(PLAN_CATALOG).map((k) => ({
     planKey: k,
