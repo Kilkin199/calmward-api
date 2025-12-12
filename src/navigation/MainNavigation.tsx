@@ -102,52 +102,45 @@ function useAuth() {
 
 // ---------- DATOS DE PATROCINIOS (CARRUSEL) ----------
 
-type SponsorAd = {
+type Sponsor = {
   id: string;
-  kind: "real" | "cta";
-  brandName: string;
+  name: string;
   tagline: string;
   description: string;
   cta: string;
-  url?: string | null;
-  imageUrl?: string | null;
+  url: string;
 };
 
-const CTA_CARDS: SponsorAd[] = [
+const CTA_SPONSORS: Sponsor[] = [
   {
-    id: "cta-announce-1",
-    kind: "cta",
-    brandName: "Anúnciate en Calmward",
-    tagline: "Tu proyecto puede estar aquí.",
+    id: "cta-anunciate",
+    name: "Anúnciate aquí",
+    tagline: "Tu proyecto en Calmward",
     description:
-      "Si trabajas en bienestar emocional, autocuidado, terapia online o apps tranquilas, este espacio es para ti.",
-    cta: "Descubre cómo patrocinarte",
-    url: null,
-    imageUrl: null,
+      "Reserva una tarjeta en la pantalla de inicio para apps, proyectos o marcas relacionadas con el bienestar emocional.",
+    cta: "Quiero anunciarme",
+    url: "https://calmward.app/patrocinio",
   },
   {
-    id: "cta-announce-2",
-    kind: "cta",
-    brandName: "Tu app dentro de Calmward",
-    tagline: "Personas que ya se cuidan pueden conocer tu proyecto.",
+    id: "cta-publicitate",
+    name: "Publicítate en Calmward",
+    tagline: "Llega a personas que cuidan su salud emocional",
     description:
-      "Patrocinio discreto, sin anuncios agresivos. Solo presencia en el carrusel de Inicio.",
-    cta: "Más info dentro de la app",
-    url: null,
-    imageUrl: null,
+      "Tu tarjeta aparece en el carrusel de inicio, con enlace directo a tu web o app.",
+    cta: "Más información",
+    url: "https://calmward.app/patrocinio",
   },
   {
-    id: "cta-announce-3",
-    kind: "cta",
-    brandName: "Marca relacionada con bienestar",
-    tagline: "Infusiones, cuadernos, apps, podcasts…",
+    id: "cta-tu-proyecto",
+    name: "Tu proyecto en Calmward",
+    tagline: "Un espacio discreto, sin ruido",
     description:
-      "Este hueco es para proyectos que suman calma, no ruido.",
-    cta: "Reserva tu espacio",
-    url: null,
-    imageUrl: null,
+      "Ideal para apps, podcasts, libros, cursos o servicios de apoyo emocional.",
+    cta: "Ver cómo funciona",
+    url: "https://calmward.app/patrocinio",
   },
 ];
+
 
 // ---------- FOOTER GLOBAL ----------
 
@@ -172,9 +165,11 @@ function AppFooter() {
 
 function AuthScreen({ navigation, route }: any) {
   const { login } = useAuth();
+
   const [mode, setMode] = useState<"login" | "register">(
     route?.params?.startMode === "register" ? "register" : "login"
   );
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [gender, setGender] = useState<"hombre" | "mujer" | "otro" | "nd" | "">(
@@ -183,6 +178,15 @@ function AuthScreen({ navigation, route }: any) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 🔁 Si alguien navega a Auth con startMode distinto, sincronizamos pestañas
+  useEffect(() => {
+    if (route?.params?.startMode === "register") {
+      setMode("register");
+    } else if (route?.params?.startMode === "login") {
+      setMode("login");
+    }
+  }, [route?.params?.startMode]);
 
   async function handleSubmit() {
     setError(null);
@@ -237,14 +241,13 @@ function AuthScreen({ navigation, route }: any) {
         return;
       }
 
-            const data = await res.json();
+      const data = await res.json();
 
       const token =
         typeof data.token === "string" && data.token.trim().length > 0
           ? data.token.trim()
           : null;
 
-      // Flags que vienen del backend (si faltan, quedan como undefined)
       const isSponsorFromApi: boolean | undefined =
         typeof data.isSponsor === "boolean" ? data.isSponsor : undefined;
 
@@ -276,7 +279,6 @@ function AuthScreen({ navigation, route }: any) {
         isSponsorActiveFromApi,
         isPremiumActiveFromApi
       );
-
 
       if (mode === "register" && gender) {
         try {
@@ -469,7 +471,11 @@ function AuthScreen({ navigation, route }: any) {
                       <TouchableOpacity
                         key={op.key}
                         onPress={() =>
-                          setGender(op.key as "hombre" | "mujer" | "otro" | "nd")
+                          setGender(op.key as
+                            | "hombre"
+                            | "mujer"
+                            | "otro"
+                            | "nd")
                         }
                         style={[
                           styles.genderChip,
@@ -525,6 +531,7 @@ function AuthScreen({ navigation, route }: any) {
   );
 }
 
+
 // ---------- TAB: INICIO ----------
 
 function HomeScreen({ navigation }: any) {
@@ -533,8 +540,10 @@ function HomeScreen({ navigation }: any) {
   const scrollRef = useRef<ScrollView | null>(null);
   const CARD_WIDTH = width * 0.8;
   const CARD_SPACING = 12;
-  const [remoteAds, setRemoteAds] = useState<SponsorAd[]>([]);
-  
+
+  // Anuncios reales que vengan del backend (si el endpoint no existe o falla, se queda vacío)
+  const [apiAds, setApiAds] = useState<Sponsor[]>([]);
+
   async function touchActivity() {
     try {
       await AsyncStorage.setItem(
@@ -546,12 +555,67 @@ function HomeScreen({ navigation }: any) {
     }
   }
 
-    useEffect(() => {
-    if (adsToShow.length <= 1) return;
+  // Carga opcional de anuncios reales desde la API (cuando la tengas)
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/sponsor/ads`);
+        if (!res.ok) {
+          // Si 404 o error, simplemente usamos solo las CTA
+          return;
+        }
+
+        const data = await res.json().catch(() => null);
+        const list = Array.isArray(data?.ads) ? data.ads : data;
+
+        const normalized: Sponsor[] = Array.isArray(list)
+          ? list.map((raw: any, idx: number) => ({
+              id: String(raw.id ?? `ad-${idx}`),
+              name: String(raw.name ?? "Anuncio Calmward"),
+              tagline:
+                String(raw.tagline ?? "").trim() ||
+                "Proyecto relacionado con bienestar emocional",
+              description: String(raw.description ?? "").trim() || "",
+              cta: String(raw.cta ?? "").trim() || "Ver más",
+              url:
+                String(raw.url ?? "").trim() ||
+                "https://calmward.app/patrocinio",
+            }))
+          : [];
+
+        if (!cancelled) {
+          setApiAds(normalized);
+        }
+      } catch (e) {
+        console.log("Error cargando anuncios patrocinados", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 🔹 LÓGICA DEL CARRUSEL
+  // Si NO hay anuncios reales → solo CTA_SPONSORS
+  // Si SÍ hay anuncios reales → todos los reales + 1 CTA al final
+  const adsToShow: Sponsor[] =
+    apiAds.length > 0 ? [...apiAds, CTA_SPONSORS[0]] : CTA_SPONSORS;
+
+  const adsLength = adsToShow.length;
+
+  // Auto-scroll del carrusel usando adsLength (NO usamos adsToShow antes de declararlo)
+  useEffect(() => {
+    if (adsLength <= 1) return;
+
+    const fullWidth = CARD_WIDTH + CARD_SPACING;
     const intervalId = setInterval(() => {
-      const fullWidth = CARD_WIDTH + CARD_SPACING;
       setSponsorIndex((prev) => {
-        const next = (prev + 1) % adsToShow.length;
+        const next = (prev + 1) % adsLength;
         if (scrollRef.current) {
           scrollRef.current.scrollTo({
             x: next * fullWidth,
@@ -561,86 +625,34 @@ function HomeScreen({ navigation }: any) {
         return next;
       });
     }, 8000);
+
     return () => clearInterval(intervalId);
-  }, [CARD_WIDTH, adsToShow.length]);
+  }, [CARD_WIDTH, CARD_SPACING, adsLength]);
 
-
-    function handleScrollEnd(e: any) {
+  function handleScrollEnd(e: any) {
     const fullWidth = CARD_WIDTH + CARD_SPACING;
     const offsetX = e.nativeEvent.contentOffset.x;
     const index = Math.round(offsetX / fullWidth);
-    const safeIndex = Math.max(0, Math.min(index, adsToShow.length - 1));
+    const safeIndex = Math.max(0, Math.min(index, adsLength - 1));
     setSponsorIndex(safeIndex);
   }
-  
-  async function loadSponsorAds() {
-    if (!API_BASE_URL) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/sponsors/ads`);
-      if (!res.ok) {
-        console.log(
-          "No se han podido cargar anuncios patrocinados, uso CTA locales."
-        );
-        return;
-      }
-      const data = await res.json();
-      const list = Array.isArray(data?.ads) ? data.ads : [];
-      const mapped: SponsorAd[] = list.map((item: any, index: number) => ({
-        id: String(item.id ?? `remote-${index}`),
-        kind: "real",
-        brandName: String(
-          item.brand_name || item.brandName || "Anuncio Calmward"
-        ),
-        tagline:
-          String(item.tagline || "").trim() ||
-          "Proyecto relacionado con bienestar emocional.",
-        description:
-          String(item.description || "").trim() ||
-          "Anuncio de un proyecto que apoya el bienestar emocional.",
-        cta: String(item.cta || "Ver más"),
-        url: item.url || null,
-        imageUrl: item.image_url || item.imageUrl || null,
-      }));
-      setRemoteAds(mapped);
-    } catch (e) {
-      console.log("Error cargando anuncios patrocinados", e);
-    }
-  }
 
-  useEffect(() => {
-    loadSponsorAds();
-  }, []);
-
-    async function handleSponsorOpen(ad: SponsorAd) {
+  async function handleSponsorOpen(sponsor: Sponsor) {
     await touchActivity();
-
-    // CTA local -> ir al flujo de patrocinio
-    if (ad.kind === "cta") {
-      const parentNav = navigation.getParent?.() || navigation;
-      if (!isLogged) {
-        parentNav.navigate("Auth");
-        return;
-      }
-      parentNav.navigate("SponsorPayment");
-      return;
-    }
-
-    // Anuncio real -> abrir URL
-    if (!ad.url) {
+    if (!sponsor.url) {
       Alert.alert(
         "Patrocinio sin enlace",
         "Este patrocinio todavía no tiene un enlace configurado."
       );
       return;
     }
-    Linking.openURL(ad.url).catch(() => {
+    Linking.openURL(sponsor.url).catch(() => {
       Alert.alert(
         "No se pudo abrir el enlace",
         "Revisa que la URL del patrocinio es correcta."
       );
     });
   }
-
 
   async function handleSponsorPayment() {
     await touchActivity();
@@ -654,15 +666,6 @@ function HomeScreen({ navigation }: any) {
 
     parentNav.navigate("SponsorPayment");
   }
-
-  const adsToShow: SponsorAd[] = useMemo(() => {
-    if (remoteAds.length === 0) {
-      // Solo CTA locales si no hay anuncios reales
-      return CTA_CARDS;
-    }
-    // Hay anuncios reales: todos los reales + 1 CTA al final
-    return [...remoteAds, { ...CTA_CARDS[0], id: "cta-final" }];
-  }, [remoteAds]);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -679,67 +682,51 @@ function HomeScreen({ navigation }: any) {
           </View>
 
           <ScrollView
-			ref={scrollRef}
-			horizontal
-			showsHorizontalScrollIndicator={false}
-			snapToInterval={CARD_WIDTH + CARD_SPACING}
-			decelerationRate="fast"
-			onMomentumScrollEnd={handleScrollEnd}
-			contentContainerStyle={{ paddingRight: 4 }}
-			>
-			{adsToShow.map((ad, idx) => (
-				<TouchableOpacity
-				key={ad.id}
-				activeOpacity={0.9}
-				style={[
-					styles.sponsorItemCard,
-					{
-					width: CARD_WIDTH,
-					marginRight:
-						idx === adsToShow.length - 1 ? 0 : CARD_SPACING,
-					},
-				]}
-				onPress={() => handleSponsorOpen(ad)}
-				>
-				{ad.imageUrl ? (
-					<Image
-					source={{ uri: ad.imageUrl }}
-					style={styles.sponsorImage}
-					resizeMode="cover"
-					/>
-				) : null}
+            ref={scrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={CARD_WIDTH + CARD_SPACING}
+            decelerationRate="fast"
+            onMomentumScrollEnd={handleScrollEnd}
+            contentContainerStyle={{ paddingRight: 4 }}
+          >
+            {adsToShow.map((s, idx) => (
+              <TouchableOpacity
+                key={s.id}
+                activeOpacity={0.9}
+                style={[
+                  styles.sponsorItemCard,
+                  {
+                    width: CARD_WIDTH,
+                    marginRight: idx === adsLength - 1 ? 0 : CARD_SPACING,
+                  },
+                ]}
+                onPress={() => handleSponsorOpen(s)}
+              >
+                <Text style={styles.sponsorName}>{s.name}</Text>
+                <Text style={styles.sponsorTagline}>{s.tagline}</Text>
+                {!!s.description && (
+                  <Text style={styles.sponsorSmall}>{s.description}</Text>
+                )}
+                <Text style={styles.sponsorCta}>{s.cta}</Text>
+                <Text style={styles.sponsorLinkHint}>
+                  Toca para ir a su enlace
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
 
-				<Text style={styles.sponsorName}>{ad.brandName}</Text>
-				<Text style={styles.sponsorTagline}>{ad.tagline}</Text>
-				<Text style={styles.sponsorSmall}>{ad.description}</Text>
-				<Text style={styles.sponsorCta}>{ad.cta}</Text>
-
-				{ad.kind === "real" ? (
-					<Text style={styles.sponsorLinkHint}>
-					Toca para ir a su enlace
-					</Text>
-				) : (
-					<Text style={styles.sponsorLinkHint}>
-					Toca para ver cómo patrocinarte en Calmward
-					</Text>
-				)}
-				</TouchableOpacity>
-				))}
-			</ScrollView>
-
-
-        <View style={styles.sponsorDotsRow}>
-		{adsToShow.map((ad, idx) => (
-			<View
-			key={ad.id}
-			style={[
-				styles.sponsorDot,
-				idx === sponsorIndex && styles.sponsorDotActive,
-			]}
-			/>
-		))}
-		</View>
-
+          <View style={styles.sponsorDotsRow}>
+            {adsToShow.map((s, idx) => (
+              <View
+                key={s.id}
+                style={[
+                  styles.sponsorDot,
+                  idx === sponsorIndex && styles.sponsorDotActive,
+                ]}
+              />
+            ))}
+          </View>
         </View>
 
         {/* BLOQUE: QUÉ ES CALMWARD */}
@@ -799,7 +786,9 @@ function HomeScreen({ navigation }: any) {
             onPress={handleSponsorPayment}
           >
             <Text style={styles.sponsorPayButtonText}>
-              {isLogged ? "Ir a página de patrocinio" : "Inicia sesión para patrocinar"}
+              {isLogged
+                ? "Ir a página de patrocinio"
+                : "Inicia sesión para patrocinar"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -809,6 +798,7 @@ function HomeScreen({ navigation }: any) {
     </SafeAreaView>
   );
 }
+
 
 // ---------- TAB: COMUNIDAD (POSTS ANÓNIMOS) ----------
 
@@ -2043,7 +2033,9 @@ function ContactScreen({ navigation }: any) {
           </Text>
           <Text style={[styles.sectionBody, { marginTop: 8 }]}>
             Correo de contacto:{" "}
-            <Text style={{ fontWeight: "600" }}>calmward.contact@gmail.com</Text>
+            <Text style={{ fontWeight: "600" }}>
+              calmward.contact@gmail.com
+            </Text>
           </Text>
 
           <TouchableOpacity style={styles.contactBtn} onPress={handleEmail}>
@@ -2064,6 +2056,7 @@ function ContactScreen({ navigation }: any) {
   );
 }
 
+
 // ---------- SUGERENCIAS ----------
 
 function SuggestionsScreen({ navigation }: any) {
@@ -2078,7 +2071,10 @@ function SuggestionsScreen({ navigation }: any) {
 
   async function touchActivity() {
     try {
-      await AsyncStorage.setItem("calmward_last_activity", String(Date.now()));
+      await AsyncStorage.setItem(
+        "calmward_last_activity",
+        String(Date.now())
+      );
     } catch {}
   }
 
@@ -2087,7 +2083,10 @@ function SuggestionsScreen({ navigation }: any) {
     if (!trimmed) return;
 
     if (!isLogged || !authToken) {
-      Alert.alert("Inicia sesión", "Necesitas una cuenta para enviar sugerencias.");
+      Alert.alert(
+        "Inicia sesión",
+        "Necesitas una cuenta para enviar sugerencias."
+      );
       goToAuth("login");
       return;
     }
@@ -2096,7 +2095,6 @@ function SuggestionsScreen({ navigation }: any) {
     setSending(true);
 
     try {
-      // Intento 1: enviar al backend (si algún día añades endpoint real)
       if (API_BASE_URL) {
         const res = await fetch(`${API_BASE_URL}/suggestions`, {
           method: "POST",
@@ -2117,7 +2115,6 @@ function SuggestionsScreen({ navigation }: any) {
         }
       }
 
-      // Fallback 2: guardado local si el backend aún no existe
       const raw = await AsyncStorage.getItem("calmward_suggestions_outbox");
       const list = raw ? JSON.parse(raw) : [];
       const item = {
@@ -2127,7 +2124,10 @@ function SuggestionsScreen({ navigation }: any) {
         createdAt: new Date().toISOString(),
       };
       list.unshift(item);
-      await AsyncStorage.setItem("calmward_suggestions_outbox", JSON.stringify(list));
+      await AsyncStorage.setItem(
+        "calmward_suggestions_outbox",
+        JSON.stringify(list)
+      );
 
       setText("");
       Alert.alert(
@@ -2148,8 +2148,8 @@ function SuggestionsScreen({ navigation }: any) {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Sugerencias</Text>
           <Text style={styles.sectionBody}>
-            Queremos que Calmward mejore contigo. Si tienes una idea, un fallo detectado
-            o una función que te gustaría ver, cuéntanosla aquí.
+            Queremos que Calmward mejore contigo. Si tienes una idea, un fallo
+            detectado o una función que te gustaría ver, cuéntanosla aquí.
           </Text>
 
           {!isLogged ? (
@@ -2158,7 +2158,8 @@ function SuggestionsScreen({ navigation }: any) {
                 Para enviar sugerencias necesitas una cuenta
               </Text>
               <Text style={styles.talkAuthSubtitle}>
-                Así evitamos spam y podemos priorizar mejoras reales de la comunidad.
+                Así evitamos spam y podemos priorizar mejoras reales de la
+                comunidad.
               </Text>
 
               <View style={styles.talkAuthButtonsRow}>
@@ -2218,6 +2219,7 @@ function SuggestionsScreen({ navigation }: any) {
     </SafeAreaView>
   );
 }
+
 
 // ---------- POLÍTICA DE PRIVACIDAD ----------
 

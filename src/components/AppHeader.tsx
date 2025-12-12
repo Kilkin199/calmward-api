@@ -158,8 +158,33 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
   }
 
   function handleRegister() {
-    handleLogin(); // misma pantalla Auth con pestaña de registro
+  closeAllMenus();
+
+  const state = navigation.getState?.();
+  // Si este navigator conoce Auth, navegamos con startMode: "register"
+  if (state && Array.isArray(state.routeNames) && state.routeNames.includes("Auth")) {
+    navigation.navigate("Auth" as never, { startMode: "register" } as never);
+    return;
   }
+
+  // Si estamos en tabs y el padre conoce Auth
+  const parent = navigation.getParent?.();
+  if (parent) {
+    const pState = parent.getState?.();
+    if (
+      pState &&
+      Array.isArray(pState.routeNames) &&
+      pState.routeNames.includes("Auth")
+    ) {
+      parent.navigate("Auth" as never, { startMode: "register" } as never);
+      return;
+    }
+  }
+
+  // Fallback
+  navigation.navigate("Auth" as never, { startMode: "register" } as never);
+}
+
 
   return (
     <View style={styles.container}>
