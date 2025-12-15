@@ -144,22 +144,117 @@ const CTA_SPONSORS: Sponsor[] = [
 
 // ---------- FOOTER GLOBAL ----------
 
-function AppFooter() {
+type FooterProps = {
+  navigation: any;
+};
+
+function AppFooter({ navigation }: FooterProps) {
   const year = new Date().getFullYear();
+
+  function goToTab(
+    tabName:
+      | "Inicio"
+      | "Comunidad"
+      | "Hablar"
+      | "TuDia"
+      | "Perfil"
+      | "AyudaUrgente"
+  ) {
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("Root" as never, { screen: tabName } as never);
+  }
+
   return (
     <View style={styles.footerContainer}>
-      <View style={styles.footerLogoRow}>
-        <AppLogo size="sm" />
+      {/* BOTONES DE NAVEGACIÓN ABAJO */}
+      <View style={styles.footerNavRow}>
+        <TouchableOpacity
+          style={styles.footerNavButton}
+          onPress={() => goToTab("Inicio")}
+        >
+          <MaterialCommunityIcons
+            name="home-outline"
+            size={18}
+            color="#E5E7EB"
+          />
+          <Text style={styles.footerNavLabel}>Inicio</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.footerNavButton}
+          onPress={() => goToTab("TuDia")}
+        >
+          <MaterialCommunityIcons
+            name="calendar-heart-outline"
+            size={18}
+            color="#E5E7EB"
+          />
+          <Text style={styles.footerNavLabel}>Tu día</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.footerNavButton}
+          onPress={() => goToTab("Hablar")}
+        >
+          <MaterialCommunityIcons
+            name="chat-processing-outline"
+            size={18}
+            color="#E5E7EB"
+          />
+          <Text style={styles.footerNavLabel}>Hablar</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.footerNavButton}
+          onPress={() => goToTab("Comunidad")}
+        >
+          <MaterialCommunityIcons
+            name="account-group-outline"
+            size={18}
+            color="#E5E7EB"
+          />
+          <Text style={styles.footerNavLabel}>Comunidad</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.footerNavButton}
+          onPress={() => goToTab("Perfil")}
+        >
+          <MaterialCommunityIcons
+            name="account-circle-outline"
+            size={18}
+            color="#E5E7EB"
+          />
+          <Text style={styles.footerNavLabel}>Perfil</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.footerNavButton}
+          onPress={() => goToTab("AyudaUrgente")}
+        >
+          <MaterialCommunityIcons
+            name="alert-circle-outline"
+            size={18}
+            color="#F97316"
+          />
+          <Text style={styles.footerNavLabel}>Ayuda</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* TEXTO LEGAL */}
+      <Text style={styles.footerLegalText}>
+        Calmward no sustituye servicios médicos ni de emergencia. Si estás en
+        peligro o al límite, busca ayuda profesional o llama a los servicios de
+        emergencia de tu país.
+      </Text>
       <Text style={styles.footerCopyright}>
         © {year} Calmward · Bienestar diario
-      </Text>
-      <Text style={styles.footerTiny}>
-        Esta app no sustituye ayuda profesional ni servicios de emergencia.
       </Text>
     </View>
   );
 }
+
+
 
 // ---------- PANTALLA DE AUTENTICACIÓN (BIENVENIDA + LOGIN/REGISTRO) ----------
 
@@ -170,6 +265,14 @@ function AuthScreen({ navigation, route }: any) {
     route?.params?.startMode === "register" ? "register" : "login"
   );
 
+  useEffect(() => {
+    if (route?.params?.startMode === "register") {
+      setMode("register");
+    } else if (route?.params?.startMode === "login") {
+      setMode("login");
+    }
+  }, [route?.params?.startMode]);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [gender, setGender] = useState<"hombre" | "mujer" | "otro" | "nd" | "">(
@@ -178,15 +281,6 @@ function AuthScreen({ navigation, route }: any) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // 🔁 Si alguien navega a Auth con startMode distinto, sincronizamos pestañas
-  useEffect(() => {
-    if (route?.params?.startMode === "register") {
-      setMode("register");
-    } else if (route?.params?.startMode === "login") {
-      setMode("login");
-    }
-  }, [route?.params?.startMode]);
 
   async function handleSubmit() {
     setError(null);
@@ -357,176 +451,178 @@ function AuthScreen({ navigation, route }: any) {
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
-      <ScrollView
-        contentContainerStyle={styles.authScroll}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.authHeaderTop}>
-          <AppLogo size="lg" />
-          <Text style={styles.appMiniTagline}>
-            Un lugar discreto para registrar tu día, hablar cuando lo necesites
-            y pedir ayuda si algo se complica.
-          </Text>
-        </View>
 
-        <View style={styles.authCard}>
-          <Text style={styles.authWelcome}>Bienvenido a Calmward</Text>
-          <Text style={styles.authSubtitle}>
-            Inicia sesión o crea tu cuenta para guardar tu día, hablar con la IA
-            y acceder a la Comunidad de forma anónima.
-          </Text>
-
-          <View style={styles.authTabRow}>
-            <TouchableOpacity
-              onPress={() => setMode("login")}
-              style={[
-                styles.authTab,
-                mode === "login" && styles.authTabActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.authTabText,
-                  mode === "login" && styles.authTabTextActive,
-                ]}
-              >
-                Iniciar sesión
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setMode("register")}
-              style={[
-                styles.authTab,
-                mode === "register" && styles.authTabActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.authTabText,
-                  mode === "register" && styles.authTabTextActive,
-                ]}
-              >
-                Crear cuenta
-              </Text>
-            </TouchableOpacity>
+      {/* CONTENEDOR scroll + footer, igual patrón que Inicio */}
+      <View style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={styles.authScroll}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.authHeaderTop}>
+            <AppLogo size="lg" />
+            <Text style={styles.appMiniTagline}>
+              Un lugar discreto para registrar tu día, hablar cuando lo necesites
+              y pedir ayuda si algo se complica.
+            </Text>
           </View>
 
-          <View style={styles.authForm}>
-            <Text style={styles.label}>Correo electrónico</Text>
-            <TextInput
-              style={styles.input}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
-              placeholder="tu_correo@ejemplo.com"
-              placeholderTextColor="#9CA3AF"
-            />
+          <View style={styles.authCard}>
+            <Text style={styles.authWelcome}>Bienvenido a Calmward</Text>
+            <Text style={styles.authSubtitle}>
+              Inicia sesión o crea tu cuenta para guardar tu día, hablar con la IA
+              y acceder a la Comunidad de forma anónima.
+            </Text>
 
-            <Text style={[styles.label, { marginTop: 12 }]}>Contraseña</Text>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                secureTextEntry={!showPassword}
-                value={password}
-                onChangeText={setPassword}
-                placeholder="••••••••"
-                placeholderTextColor="#9CA3AF"
-              />
+            <View style={styles.authTabRow}>
               <TouchableOpacity
-                style={{ marginLeft: 8 }}
-                onPress={() => setShowPassword((v) => !v)}
+                onPress={() => setMode("login")}
+                style={[
+                  styles.authTab,
+                  mode === "login" && styles.authTabActive,
+                ]}
               >
-                <Text style={{ fontSize: 12, color: "#0EA5E9" }}>
-                  {showPassword ? "Ocultar" : "Mostrar"}
+                <Text
+                  style={[
+                    styles.authTabText,
+                    mode === "login" && styles.authTabTextActive,
+                  ]}
+                >
+                  Iniciar sesión
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setMode("register")}
+                style={[
+                  styles.authTab,
+                  mode === "register" && styles.authTabActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.authTabText,
+                    mode === "register" && styles.authTabTextActive,
+                  ]}
+                >
+                  Crear cuenta
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {mode === "login" && (
-              <TouchableOpacity
-                style={styles.forgotBtn}
-                onPress={handleForgotPassword}
-              >
-                <Text style={styles.forgotText}>
-                  Recuperar contraseña por correo
-                </Text>
-              </TouchableOpacity>
-            )}
+            <View style={styles.authForm}>
+              <Text style={styles.label}>Correo electrónico</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+                placeholder="tu_correo@ejemplo.com"
+                placeholderTextColor="#9CA3AF"
+              />
 
-            {mode === "register" && (
-              <>
-                <Text style={[styles.label, { marginTop: 12 }]}>
-                  ¿Con qué sexo / género te identificas?
-                </Text>
-                <View style={styles.genderRow}>
-                  {[
-                    { key: "hombre", label: "Hombre" },
-                    { key: "mujer", label: "Mujer" },
-                    { key: "otro", label: "Otro" },
-                    { key: "nd", label: "Prefiero no decirlo" },
-                  ].map((op) => {
-                    const active = gender === op.key;
-                    return (
-                      <TouchableOpacity
-                        key={op.key}
-                        onPress={() =>
-                          setGender(op.key as
-                            | "hombre"
-                            | "mujer"
-                            | "otro"
-                            | "nd")
-                        }
-                        style={[
-                          styles.genderChip,
-                          active && styles.genderChipActive,
-                        ]}
-                      >
-                        <Text
+              <Text style={[styles.label, { marginTop: 12 }]}>Contraseña</Text>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor="#9CA3AF"
+                />
+                <TouchableOpacity
+                  style={{ marginLeft: 8 }}
+                  onPress={() => setShowPassword((v) => !v)}
+                >
+                  <Text style={{ fontSize: 12, color: "#0EA5E9" }}>
+                    {showPassword ? "Ocultar" : "Mostrar"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {mode === "login" && (
+                <TouchableOpacity
+                  style={styles.forgotBtn}
+                  onPress={handleForgotPassword}
+                >
+                  <Text style={styles.forgotText}>
+                    Recuperar contraseña por correo
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {mode === "register" && (
+                <>
+                  <Text style={[styles.label, { marginTop: 12 }]}>
+                    ¿Con qué sexo / género te identificas?
+                  </Text>
+                  <View style={styles.genderRow}>
+                    {[
+                      { key: "hombre", label: "Hombre" },
+                      { key: "mujer", label: "Mujer" },
+                      { key: "otro", label: "Otro" },
+                      { key: "nd", label: "Prefiero no decirlo" },
+                    ].map((op) => {
+                      const active = gender === op.key;
+                      return (
+                        <TouchableOpacity
+                          key={op.key}
+                          onPress={() =>
+                            setGender(
+                              op.key as "hombre" | "mujer" | "otro" | "nd"
+                            )
+                          }
                           style={[
-                            styles.genderChipText,
-                            active && styles.genderChipTextActive,
+                            styles.genderChip,
+                            active && styles.genderChipActive,
                           ]}
                         >
-                          {op.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-                <Text style={styles.genderHint}>
-                  Este dato solo se usa dentro de Calmward; no se muestra a
-                  otras personas.
+                          <Text
+                            style={[
+                              styles.genderChipText,
+                              active && styles.genderChipTextActive,
+                            ]}
+                          >
+                            {op.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.genderHint}>
+                    Este dato solo se usa dentro de Calmward; no se muestra a
+                    otras personas.
+                  </Text>
+                </>
+              )}
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={handleSubmit}
+                disabled={loading}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {loading
+                    ? "Procesando..."
+                    : mode === "login"
+                    ? "Iniciar sesión"
+                    : "Crear cuenta"}
                 </Text>
-              </>
-            )}
+              </TouchableOpacity>
+            </View>
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={handleSubmit}
-              disabled={loading}
-            >
-              <Text style={styles.primaryButtonText}>
-                {loading
-                  ? "Procesando..."
-                  : mode === "login"
-                  ? "Iniciar sesión"
-                  : "Crear cuenta"}
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.disclaimer}>
+              Calmward no sustituye ayuda profesional ni servicios de emergencia.
+              En caso de peligro inmediato, contacta con los servicios de
+              emergencia de tu país.
+            </Text>
           </View>
+        </ScrollView>
 
-          <Text style={styles.disclaimer}>
-            Calmward no sustituye ayuda profesional ni servicios de emergencia.
-            En caso de peligro inmediato, contacta con los servicios de
-            emergencia de tu país.
-          </Text>
-        </View>
-
-        <AppFooter />
-      </ScrollView>
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
@@ -601,14 +697,11 @@ function HomeScreen({ navigation }: any) {
   }, []);
 
   // 🔹 LÓGICA DEL CARRUSEL
-  // Si NO hay anuncios reales → solo CTA_SPONSORS
-  // Si SÍ hay anuncios reales → todos los reales + 1 CTA al final
   const adsToShow: Sponsor[] =
     apiAds.length > 0 ? [...apiAds, CTA_SPONSORS[0]] : CTA_SPONSORS;
 
   const adsLength = adsToShow.length;
 
-  // Auto-scroll del carrusel usando adsLength (NO usamos adsToShow antes de declararlo)
   useEffect(() => {
     if (adsLength <= 1) return;
 
@@ -671,133 +764,136 @@ function HomeScreen({ navigation }: any) {
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* BLOQUE DE PATROCINIOS ARRIBA */}
-        <View style={[styles.sectionCard, styles.sponsorCard]}>
-          <View style={styles.sponsorHeaderRow}>
-            <Text style={styles.sponsorBadge}>Patrocinado</Text>
-            <Text style={styles.sponsorMiniText}>
-              Espacio reservado para proyectos que se anuncian en Calmward
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.content}>
+          {/* BLOQUE DE PATROCINIOS ARRIBA */}
+          <View style={[styles.sectionCard, styles.sponsorCard]}>
+            <View style={styles.sponsorHeaderRow}>
+              <Text style={styles.sponsorBadge}>Patrocinado</Text>
+              <Text style={styles.sponsorMiniText}>
+                Espacio reservado para proyectos que se anuncian en Calmward
+              </Text>
+            </View>
+
+            <ScrollView
+              ref={scrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={CARD_WIDTH + CARD_SPACING}
+              decelerationRate="fast"
+              onMomentumScrollEnd={handleScrollEnd}
+              contentContainerStyle={{ paddingRight: 4 }}
+            >
+              {adsToShow.map((s, idx) => (
+                <TouchableOpacity
+                  key={s.id}
+                  activeOpacity={0.9}
+                  style={[
+                    styles.sponsorItemCard,
+                    {
+                      width: CARD_WIDTH,
+                      marginRight: idx === adsLength - 1 ? 0 : CARD_SPACING,
+                    },
+                  ]}
+                  onPress={() => handleSponsorOpen(s)}
+                >
+                  <Text style={styles.sponsorName}>{s.name}</Text>
+                  <Text style={styles.sponsorTagline}>{s.tagline}</Text>
+                  {!!s.description && (
+                    <Text style={styles.sponsorSmall}>{s.description}</Text>
+                  )}
+                  <Text style={styles.sponsorCta}>{s.cta}</Text>
+                  <Text style={styles.sponsorLinkHint}>
+                    Toca para ir a su enlace
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={styles.sponsorDotsRow}>
+              {adsToShow.map((s, idx) => (
+                <View
+                  key={s.id}
+                  style={[
+                    styles.sponsorDot,
+                    idx === sponsorIndex && styles.sponsorDotActive,
+                  ]}
+                />
+              ))}
+            </View>
+          </View>
+
+          {/* BLOQUE: QUÉ ES CALMWARD */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Qué es Calmward</Text>
+            <Text style={styles.sectionBody}>
+              Calmward es una app pensada para acompañarte en días buenos,
+              regulares y malos. No sustituye a profesionales ni a servicios de
+              emergencia, pero sí quiere ser un lugar seguro donde:
+            </Text>
+            <Text style={styles.sectionBody}>
+              • Registrar cómo te sientes a lo largo del tiempo.{"\n"}
+              • Escribir lo que te cuesta decir en voz alta.{"\n"}
+              • Hablar con una IA que responde con cuidado, sin juzgarte.{"\n"}
+              • Tener a mano recordatorios de que pedir ayuda no es un fracaso.
+            </Text>
+            <Text style={styles.sectionBody}>
+              La idea es que, al abrir Calmward, no te sientas solo con lo que
+              estás llevando encima.
             </Text>
           </View>
 
-          <ScrollView
-            ref={scrollRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            snapToInterval={CARD_WIDTH + CARD_SPACING}
-            decelerationRate="fast"
-            onMomentumScrollEnd={handleScrollEnd}
-            contentContainerStyle={{ paddingRight: 4 }}
-          >
-            {adsToShow.map((s, idx) => (
-              <TouchableOpacity
-                key={s.id}
-                activeOpacity={0.9}
-                style={[
-                  styles.sponsorItemCard,
-                  {
-                    width: CARD_WIDTH,
-                    marginRight: idx === adsLength - 1 ? 0 : CARD_SPACING,
-                  },
-                ]}
-                onPress={() => handleSponsorOpen(s)}
-              >
-                <Text style={styles.sponsorName}>{s.name}</Text>
-                <Text style={styles.sponsorTagline}>{s.tagline}</Text>
-                {!!s.description && (
-                  <Text style={styles.sponsorSmall}>{s.description}</Text>
-                )}
-                <Text style={styles.sponsorCta}>{s.cta}</Text>
-                <Text style={styles.sponsorLinkHint}>
-                  Toca para ir a su enlace
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          {/* BLOQUE: PATROCINA CALMWARD / PAGO */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Patrocina Calmward</Text>
+            <Text style={styles.sectionBody}>
+              Si tienes una app, un proyecto o una marca relacionada con bienestar
+              emocional, puedes reservar una tarjeta como la de arriba para
+              mostrarla a las personas que usan Calmward.
+            </Text>
+            <Text style={styles.sectionBody}>
+              • El patrocinio te permite enseñar tu proyecto de forma discreta
+              dentro de la app.{"\n"}
+              • Puedes enlazar a tu web, a tu app o a la tienda donde se descargue
+              tu producto.{"\n"}
+              • Más adelante podrás ver estadísticas básicas de visualizaciones y
+              toques en tu tarjeta.
+            </Text>
 
-          <View style={styles.sponsorDotsRow}>
-            {adsToShow.map((s, idx) => (
-              <View
-                key={s.id}
-                style={[
-                  styles.sponsorDot,
-                  idx === sponsorIndex && styles.sponsorDotActive,
-                ]}
-              />
-            ))}
+            {isSponsor ? (
+              <Text style={[styles.sectionBody, { marginTop: 8 }]}>
+                Tu cuenta ya está marcada como patrocinador activo. Puedes ver tus
+                estadísticas desde tu perfil.
+              </Text>
+            ) : (
+              <Text style={[styles.sectionBody, { marginTop: 8 }]}>
+                Para configurar un patrocinio necesitas tener una cuenta y haber
+                iniciado sesión.
+              </Text>
+            )}
+
+            <TouchableOpacity
+              style={[
+                styles.sponsorPayButton,
+                !isLogged && styles.sponsorPayButtonDisabled,
+              ]}
+              onPress={handleSponsorPayment}
+            >
+              <Text style={styles.sponsorPayButtonText}>
+                {isLogged
+                  ? "Ir a página de patrocinio"
+                  : "Inicia sesión para patrocinar"}
+              </Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        </ScrollView>
 
-        {/* BLOQUE: QUÉ ES CALMWARD */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Qué es Calmward</Text>
-          <Text style={styles.sectionBody}>
-            Calmward es una app pensada para acompañarte en días buenos,
-            regulares y malos. No sustituye a profesionales ni a servicios de
-            emergencia, pero sí quiere ser un lugar seguro donde:
-          </Text>
-          <Text style={styles.sectionBody}>
-            • Registrar cómo te sientes a lo largo del tiempo.{"\n"}
-            • Escribir lo que te cuesta decir en voz alta.{"\n"}
-            • Hablar con una IA que responde con cuidado, sin juzgarte.{"\n"}
-            • Tener a mano recordatorios de que pedir ayuda no es un fracaso.
-          </Text>
-          <Text style={styles.sectionBody}>
-            La idea es que, al abrir Calmward, no te sientas solo con lo que
-            estás llevando encima.
-          </Text>
-        </View>
-
-        {/* BLOQUE: PATROCINA CALMWARD / PAGO */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Patrocina Calmward</Text>
-          <Text style={styles.sectionBody}>
-            Si tienes una app, un proyecto o una marca relacionada con bienestar
-            emocional, puedes reservar una tarjeta como la de arriba para
-            mostrarla a las personas que usan Calmward.
-          </Text>
-          <Text style={styles.sectionBody}>
-            • El patrocinio te permite enseñar tu proyecto de forma discreta
-            dentro de la app.{"\n"}
-            • Puedes enlazar a tu web, a tu app o a la tienda donde se descargue
-            tu producto.{"\n"}
-            • Más adelante podrás ver estadísticas básicas de visualizaciones y
-            toques en tu tarjeta.
-          </Text>
-
-          {isSponsor ? (
-            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
-              Tu cuenta ya está marcada como patrocinador activo. Puedes ver tus
-              estadísticas desde tu perfil.
-            </Text>
-          ) : (
-            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
-              Para configurar un patrocinio necesitas tener una cuenta y haber
-              iniciado sesión.
-            </Text>
-          )}
-
-          <TouchableOpacity
-            style={[
-              styles.sponsorPayButton,
-              !isLogged && styles.sponsorPayButtonDisabled,
-            ]}
-            onPress={handleSponsorPayment}
-          >
-            <Text style={styles.sponsorPayButtonText}>
-              {isLogged
-                ? "Ir a página de patrocinio"
-                : "Inicia sesión para patrocinar"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <AppFooter />
-      </ScrollView>
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
+
 
 
 // ---------- TAB: COMUNIDAD (POSTS ANÓNIMOS) ----------
@@ -876,10 +972,12 @@ function CommunityScreen({ navigation }: any) {
   useEffect(() => {
     loadPosts(true);
   }, []);
+
   function goToAuth(startMode: "login" | "register") {
-      const parentNav = navigation.getParent?.() || navigation;
-      parentNav.navigate("Auth", { startMode });
-    }
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("Auth", { startMode });
+  }
+
   function ensureLoggedForCommunity(actionLabel: string) {
     if (isLogged && authToken) return true;
     Alert.alert(
@@ -1056,11 +1154,12 @@ function CommunityScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-                  {!isLogged ? (
+      <View style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          {!isLogged ? (
             <View style={styles.talkAuthGate}>
               <Text style={styles.talkAuthTitle}>
                 Para publicar en la Comunidad necesitas una cuenta
@@ -1121,210 +1220,210 @@ function CommunityScreen({ navigation }: any) {
             </>
           )}
 
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Lo último que se ha compartido</Text>
+            {loading && (
+              <View style={{ paddingVertical: 12 }}>
+                <ActivityIndicator size="small" color="#0EA5E9" />
+              </View>
+            )}
 
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Lo último que se ha compartido</Text>
-          {loading && (
-            <View style={{ paddingVertical: 12 }}>
-              <ActivityIndicator size="small" color="#0EA5E9" />
-            </View>
-          )}
+            {!loading && posts.length === 0 && (
+              <Text style={styles.sectionBody}>
+                Aún no hay publicaciones. Cuando alguien comparta algo (o tú
+                mismo), aparecerá aquí.
+              </Text>
+            )}
 
-          {!loading && posts.length === 0 && (
-            <Text style={styles.sectionBody}>
-              Aún no hay publicaciones. Cuando alguien comparta algo (o tú
-              mismo), aparecerá aquí.
-            </Text>
-          )}
+            {posts.map((p) => (
+              <View
+                key={String(p.id)}
+                style={[
+                  styles.sectionCard,
+                  {
+                    marginTop: 12,
+                    marginBottom: 0,
+                    backgroundColor: "#F9FAFB",
+                  },
+                ]}
+              >
+                <Text style={styles.sectionBody}>{p.text}</Text>
+                {!!p.createdAt && (
+                  <Text
+                    style={{
+                      marginTop: 6,
+                      fontSize: 11,
+                      color: "#9CA3AF",
+                    }}
+                  >
+                    {formatDate(p.createdAt)}
+                  </Text>
+                )}
 
-          {posts.map((p) => (
-            <View
-              key={String(p.id)}
-              style={[
-                styles.sectionCard,
-                {
-                  marginTop: 12,
-                  marginBottom: 0,
-                  backgroundColor: "#F9FAFB",
-                },
-              ]}
-            >
-              <Text style={styles.sectionBody}>{p.text}</Text>
-              {!!p.createdAt && (
-                <Text
+                <View
                   style={{
-                    marginTop: 6,
-                    fontSize: 11,
-                    color: "#9CA3AF",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginTop: 8,
+                    justifyContent: "space-between",
                   }}
                 >
-                  {formatDate(p.createdAt)}
-                </Text>
-              )}
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <TouchableOpacity
+                      onPress={() => handleLike(p.id)}
+                      disabled={!isLogged}
+                      style={{
+                        paddingVertical: 4,
+                        paddingHorizontal: 8,
+                        borderRadius: 999,
+                        backgroundColor: isLogged ? "#0EA5E9" : "#CBD5E1",
+                        marginRight: 6,
+                        opacity: isLogged ? 1 : 0.8,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: "#FFFFFF",
+                          fontSize: 12,
+                          fontWeight: "600",
+                        }}
+                      >
+                        Me gusta
+                      </Text>
+                    </TouchableOpacity>
+                    <Text
+                      style={{ fontSize: 12, color: "#4B5563", minWidth: 40 }}
+                    >
+                      {p.likes || 0} ❤
+                    </Text>
+                  </View>
 
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginTop: 8,
-                  justifyContent: "space-between",
-                }}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                                    <TouchableOpacity
-                    onPress={() => handleLike(p.id)}
+                  <TouchableOpacity
+                    onPress={() => openCommentBox(p.id)}
                     disabled={!isLogged}
                     style={{
                       paddingVertical: 4,
                       paddingHorizontal: 8,
                       borderRadius: 999,
-                      backgroundColor: isLogged ? "#0EA5E9" : "#CBD5E1",
-                      marginRight: 6,
-                      opacity: isLogged ? 1 : 0.8,
+                      borderWidth: 1,
+                      borderColor: isLogged ? "#D1D5DB" : "#E5E7EB",
+                      backgroundColor: isLogged ? "transparent" : "#F3F4F6",
+                      opacity: isLogged ? 1 : 0.85,
                     }}
                   >
-
                     <Text
                       style={{
-                        color: "#FFFFFF",
                         fontSize: 12,
-                        fontWeight: "600",
+                        color: "#4B5563",
+                        fontWeight: "500",
                       }}
                     >
-                      Me gusta
+                      Comentar
+                      {typeof p.commentsCount === "number" && p.commentsCount > 0
+                        ? ` (${p.commentsCount})`
+                        : ""}
                     </Text>
                   </TouchableOpacity>
-                  <Text
-                    style={{ fontSize: 12, color: "#4B5563", minWidth: 40 }}
-                  >
-                    {p.likes || 0} ❤
-                  </Text>
                 </View>
 
-                 <TouchableOpacity
-                  onPress={() => openCommentBox(p.id)}
-                  disabled={!isLogged}
-                  style={{
-                    paddingVertical: 4,
-                    paddingHorizontal: 8,
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    borderColor: isLogged ? "#D1D5DB" : "#E5E7EB",
-                    backgroundColor: isLogged ? "transparent" : "#F3F4F6",
-                    opacity: isLogged ? 1 : 0.85,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: "#4B5563",
-                      fontWeight: "500",
-                    }}
-                  >
-                    Comentar
-                    {typeof p.commentsCount === "number" && p.commentsCount > 0
-                      ? ` (${p.commentsCount})`
-                      : ""}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {commentForId === p.id && (
-                <View style={{ marginTop: 10 }}>
-                  <TextInput
-                    style={styles.dayInput}
-                    placeholder="Escribe tu comentario con respeto..."
-                    placeholderTextColor="#9CA3AF"
-                    multiline
-                    value={commentText}
-                    onChangeText={setCommentText}
-                  />
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "flex-end",
-                      marginTop: 6,
-                      gap: 8,
-                    } as any}
-                  >
-                    <TouchableOpacity
-                      onPress={() => {
-                        setCommentForId(null);
-                        setCommentText("");
-                      }}
+                {commentForId === p.id && (
+                  <View style={{ marginTop: 10 }}>
+                    <TextInput
+                      style={styles.dayInput}
+                      placeholder="Escribe tu comentario con respeto..."
+                      placeholderTextColor="#9CA3AF"
+                      multiline
+                      value={commentText}
+                      onChangeText={setCommentText}
+                    />
+                    <View
                       style={{
-                        paddingVertical: 8,
-                        paddingHorizontal: 12,
-                        borderRadius: 999,
-                        borderWidth: 1,
-                        borderColor: "#D1D5DB",
-                      }}
+                        flexDirection: "row",
+                        justifyContent: "flex-end",
+                        marginTop: 6,
+                        gap: 8,
+                      } as any}
                     >
-                      <Text style={{ fontSize: 12, color: "#4B5563" }}>
-                        Cancelar
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={handleSendComment}
-                      disabled={!commentText.trim()}
-                      style={[
-                        {
+                      <TouchableOpacity
+                        onPress={() => {
+                          setCommentForId(null);
+                          setCommentText("");
+                        }}
+                        style={{
                           paddingVertical: 8,
                           paddingHorizontal: 12,
                           borderRadius: 999,
-                          backgroundColor: "#22C55E",
-                        },
-                        !commentText.trim() && { opacity: 0.6 },
-                      ]}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          color: "#FFFFFF",
-                          fontWeight: "600",
+                          borderWidth: 1,
+                          borderColor: "#D1D5DB",
                         }}
                       >
-                        Enviar comentario
-                      </Text>
-                    </TouchableOpacity>
+                        <Text style={{ fontSize: 12, color: "#4B5563" }}>
+                          Cancelar
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={handleSendComment}
+                        disabled={!commentText.trim()}
+                        style={[
+                          {
+                            paddingVertical: 8,
+                            paddingHorizontal: 12,
+                            borderRadius: 999,
+                            backgroundColor: "#22C55E",
+                          },
+                          !commentText.trim() && { opacity: 0.6 },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            color: "#FFFFFF",
+                            fontWeight: "600",
+                          }}
+                        >
+                          Enviar comentario
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                </View>
-              )}
-            </View>
-          ))}
+                )}
+              </View>
+            ))}
 
-          {!loading && posts.length > 0 && (
-            <TouchableOpacity
-              style={{
-                marginTop: 16,
-                alignSelf: "flex-start",
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: "#D1D5DB",
-              }}
-              onPress={() => loadPosts(false)}
-              disabled={refreshing}
-            >
-              <Text
+            {!loading && posts.length > 0 && (
+              <TouchableOpacity
                 style={{
-                  fontSize: 12,
-                  color: "#4B5563",
-                  fontWeight: "500",
+                  marginTop: 16,
+                  alignSelf: "flex-start",
+                  paddingHorizontal: 10,
+                  paddingVertical: 8,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: "#D1D5DB",
                 }}
+                onPress={() => loadPosts(false)}
+                disabled={refreshing}
               >
-                {refreshing ? "Actualizando..." : "Actualizar lista"}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: "#4B5563",
+                    fontWeight: "500",
+                  }}
+                >
+                  {refreshing ? "Actualizando..." : "Actualizar lista"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </ScrollView>
 
-        <AppFooter />
-      </ScrollView>
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
+
 
 // ---------- TAB: HABLAR (CHAT) ----------
 
@@ -1356,18 +1455,20 @@ function TalkScreen({ navigation }: any) {
       // ignoramos
     }
   }
+
   function ensureLoggedForAI() {
-      if (isLogged && authToken) return true;
+    if (isLogged && authToken) return true;
 
-      Alert.alert(
-        "Inicia sesión",
-        "Necesitas iniciar sesión para usar el chat IA de Calmward."
-      );
+    Alert.alert(
+      "Inicia sesión",
+      "Necesitas iniciar sesión para usar el chat IA de Calmward."
+    );
 
-      const parentNav = navigation.getParent?.() || navigation;
-      parentNav.navigate("Auth");
-      return false;
-    }
+    const parentNav = navigation.getParent?.() || navigation;
+    parentNav.navigate("Auth");
+    return false;
+  }
+
   function getModeConfig() {
     if (mode === "listen") {
       return {
@@ -1384,7 +1485,7 @@ function TalkScreen({ navigation }: any) {
   }
 
   async function handleSend() {
-	if (!ensureLoggedForAI()) return;
+    if (!ensureLoggedForAI()) return;
     const trimmed = text.trim();
     if (!trimmed || sending) return;
 
@@ -1482,11 +1583,12 @@ function TalkScreen({ navigation }: any) {
 
     setter((prev) => [...prev, aiMsg]);
   }
-	function goToAuth(startMode: "login" | "register") {
+
+  function goToAuth(startMode: "login" | "register") {
     const parentNav = navigation.getParent?.() || navigation;
     parentNav.navigate("Auth", { startMode });
-	}
-	
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
@@ -1495,158 +1597,159 @@ function TalkScreen({ navigation }: any) {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Hablar</Text>
-            <Text style={styles.sectionBody}>
-              Aquí puedes desahogarte o intentar ordenar lo que sientes. Tú
-              eliges el modo.
-            </Text>
+        <View style={{ flex: 1 }}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Hablar</Text>
+              <Text style={styles.sectionBody}>
+                Aquí puedes desahogarte o intentar ordenar lo que sientes. Tú
+                eliges el modo.
+              </Text>
 
-                        {!isLogged ? (
-              <View style={styles.talkAuthGate}>
-                <Text style={styles.talkAuthTitle}>
-                  Para usar el chat necesitas una cuenta
-                </Text>
-                <Text style={styles.talkAuthSubtitle}>
-                  Así mantenemos la Comunidad y el chat más seguros y evitamos abuso.
-                </Text>
+              {!isLogged ? (
+                <View style={styles.talkAuthGate}>
+                  <Text style={styles.talkAuthTitle}>
+                    Para usar el chat necesitas una cuenta
+                  </Text>
+                  <Text style={styles.talkAuthSubtitle}>
+                    Así mantenemos la Comunidad y el chat más seguros y evitamos abuso.
+                  </Text>
 
-                <View style={styles.talkAuthButtonsRow}>
-                  <TouchableOpacity
-                    style={styles.talkAuthBtnOutline}
-                    onPress={() => goToAuth("login")}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.talkAuthBtnOutlineText}>
-                      Iniciar sesión
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.talkAuthBtnPrimary}
-                    onPress={() => goToAuth("register")}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.talkAuthBtnPrimaryText}>
-                      Crear cuenta
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <>
-                <View style={styles.modeRow}>
-                  <TouchableOpacity
-                    onPress={() => setMode("listen")}
-                    style={[
-                      styles.modeButton,
-                      mode === "listen" && styles.modeButtonActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.modeButtonText,
-                        mode === "listen" && styles.modeButtonTextActive,
-                      ]}
+                  <View style={styles.talkAuthButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.talkAuthBtnOutline}
+                      onPress={() => goToAuth("login")}
+                      activeOpacity={0.85}
                     >
-                      Solo escúchame
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => setMode("organize")}
-                    style={[
-                      styles.modeButton,
-                      mode === "organize" && styles.modeButtonActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.modeButtonText,
-                        mode === "organize" && styles.modeButtonTextActive,
-                      ]}
-                    >
-                      Ayúdame a ordenar
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                      <Text style={styles.talkAuthBtnOutlineText}>
+                        Iniciar sesión
+                      </Text>
+                    </TouchableOpacity>
 
-                <View style={styles.chatBox}>
-                  {activeMessages.map((m) => (
-                    <View
-                      key={m.id}
+                    <TouchableOpacity
+                      style={styles.talkAuthBtnPrimary}
+                      onPress={() => goToAuth("register")}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.talkAuthBtnPrimaryText}>
+                        Crear cuenta
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.modeRow}>
+                    <TouchableOpacity
+                      onPress={() => setMode("listen")}
                       style={[
-                        styles.chatBubble,
-                        m.from === "user"
-                          ? styles.chatBubbleUser
-                          : styles.chatBubbleAi,
+                        styles.modeButton,
+                        mode === "listen" && styles.modeButtonActive,
                       ]}
                     >
                       <Text
-                        style={
-                          m.from === "user"
-                            ? styles.chatTextUser
-                            : styles.chatTextAi
-                        }
+                        style={[
+                          styles.modeButtonText,
+                          mode === "listen" && styles.modeButtonTextActive,
+                        ]}
                       >
-                        {m.text}
+                        Solo escúchame
                       </Text>
-                    </View>
-                  ))}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setMode("organize")}
+                      style={[
+                        styles.modeButton,
+                        mode === "organize" && styles.modeButtonActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.modeButtonText,
+                          mode === "organize" && styles.modeButtonTextActive,
+                        ]}
+                      >
+                        Ayúdame a ordenar
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
 
-                  {activeMessages.length === 0 && (
-                    <Text style={styles.chatPlaceholder}>
-                      {mode === "listen"
-                        ? "Habla conmigo como con un amigo de confianza. Puedes empezar por cómo te sientes hoy o qué te está costando más."
-                        : "Aquí la IA intentará ayudarte a poner orden: decisiones, problemas que se te hacen bola, siguientes pasos pequeños… (esta parte se desbloquea con Premium en el backend)."}
-                    </Text>
-                  )}
-                </View>
+                  <View style={styles.chatBox}>
+                    {activeMessages.map((m) => (
+                      <View
+                        key={m.id}
+                        style={[
+                          styles.chatBubble,
+                          m.from === "user"
+                            ? styles.chatBubbleUser
+                            : styles.chatBubbleAi,
+                        ]}
+                      >
+                        <Text
+                          style={
+                            m.from === "user"
+                              ? styles.chatTextUser
+                              : styles.chatTextAi
+                          }
+                        >
+                          {m.text}
+                        </Text>
+                      </View>
+                    ))}
 
-                <View style={styles.inputRow}>
-                  <TextInput
-                    style={styles.chatInput}
-                    placeholder={
-                      mode === "listen"
-                        ? "Dime cómo estás, aunque no tengas las palabras perfectas..."
-                        : "Cuéntame qué quieres ordenar o qué decisión se te hace difícil ahora mismo..."
-                    }
-                    placeholderTextColor="#9CA3AF"
-                    multiline
-                    value={text}
-                    onChangeText={setText}
-                  />
-                  <TouchableOpacity
-                    style={styles.sendButton}
-                    onPress={handleSend}
-                    disabled={sending}
-                  >
-                    <Text style={styles.sendButtonText}>
-                      {sending ? "..." : "Enviar"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                    {activeMessages.length === 0 && (
+                      <Text style={styles.chatPlaceholder}>
+                        {mode === "listen"
+                          ? "Habla conmigo como con un amigo de confianza. Puedes empezar por cómo te sientes hoy o qué te está costando más."
+                          : "Aquí la IA intentará ayudarte a poner orden: decisiones, problemas que se te hacen bola, siguientes pasos pequeños… (esta parte se desbloquea con Premium en el backend)."}
+                      </Text>
+                    )}
+                  </View>
 
-                <Text style={styles.disclaimerSmall}>
-                  Calmward no sustituye a profesionales de salud mental ni puede
-                  responder en situaciones de emergencia.
-                </Text>
-              </>
-            )}
+                  <View style={styles.inputRow}>
+                    <TextInput
+                      style={styles.chatInput}
+                      placeholder={
+                        mode === "listen"
+                          ? "Dime cómo estás, aunque no tengas las palabras perfectas..."
+                          : "Cuéntame qué quieres ordenar o qué decisión se te hace difícil ahora mismo..."
+                      }
+                      placeholderTextColor="#9CA3AF"
+                      multiline
+                      value={text}
+                      onChangeText={setText}
+                    />
+                    <TouchableOpacity
+                      style={styles.sendButton}
+                      onPress={handleSend}
+                      disabled={sending}
+                    >
+                      <Text style={styles.sendButtonText}>
+                        {sending ? "..." : "Enviar"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
 
+                  <Text style={styles.disclaimerSmall}>
+                    Calmward no sustituye a profesionales de salud mental ni puede
+                    responder en situaciones de emergencia.
+                  </Text>
+                </>
+              )}
+            </View>
+          </ScrollView>
 
-          </View>
-
-          <AppFooter />
-        </ScrollView>
+          <AppFooter navigation={navigation} />
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
+
 
 // ---------- TAB: TU DÍA ----------
 
@@ -1694,107 +1797,111 @@ function DayScreen({ navigation }: any) {
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Tu día</Text>
-          <Text style={styles.sectionBody}>
-            Marca cómo estás y deja una nota si te ayuda. Calmward irá
-            guardando tu historia.
-          </Text>
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Tu día</Text>
+            <Text style={styles.sectionBody}>
+              Marca cómo estás y deja una nota si te ayuda. Calmward irá
+              guardando tu historia.
+            </Text>
 
-          {!isLogged ? (
-            <View style={styles.talkAuthGate}>
-              <Text style={styles.talkAuthTitle}>
-                Para guardar tu día necesitas una cuenta
-              </Text>
-              <Text style={styles.talkAuthSubtitle}>
-                Tu registro diario se vincula a tu sesión para que no pierdas tu historia.
-                Inicia sesión o crea una cuenta en dos toques.
-              </Text>
+            {!isLogged ? (
+              <View style={styles.talkAuthGate}>
+                <Text style={styles.talkAuthTitle}>
+                  Para guardar tu día necesitas una cuenta
+                </Text>
+                <Text style={styles.talkAuthSubtitle}>
+                  Tu registro diario se vincula a tu sesión para que no pierdas tu historia.
+                  Inicia sesión o crea una cuenta en dos toques.
+                </Text>
 
-              <View style={styles.talkAuthButtonsRow}>
-                <TouchableOpacity
-                  style={styles.talkAuthBtnOutline}
-                  onPress={() => goToAuth("login")}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.talkAuthBtnOutlineText}>
-                    Iniciar sesión
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.talkAuthBtnPrimary}
-                  onPress={() => goToAuth("register")}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.talkAuthBtnPrimaryText}>
-                    Crear cuenta
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            <>
-              <Text style={[styles.label, { marginTop: 12 }]}>
-                ¿Cómo te sientes ahora mismo?
-              </Text>
-
-              <View style={styles.ratingRow}>
-                {[1, 2, 3, 4, 5].map((v) => (
+                <View style={styles.talkAuthButtonsRow}>
                   <TouchableOpacity
-                    key={v}
-                    style={[
-                      styles.ratingCircle,
-                      rating === v && styles.ratingCircleActive,
-                    ]}
-                    onPress={() => setRating(v)}
+                    style={styles.talkAuthBtnOutline}
+                    onPress={() => goToAuth("login")}
+                    activeOpacity={0.85}
                   >
-                    <Text
-                      style={[
-                        styles.ratingText,
-                        rating === v && styles.ratingTextActive,
-                      ]}
-                    >
-                      {v}
+                    <Text style={styles.talkAuthBtnOutlineText}>
+                      Iniciar sesión
                     </Text>
                   </TouchableOpacity>
-                ))}
+
+                  <TouchableOpacity
+                    style={styles.talkAuthBtnPrimary}
+                    onPress={() => goToAuth("register")}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.talkAuthBtnPrimaryText}>
+                      Crear cuenta
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
+            ) : (
+              <>
+                <Text style={[styles.label, { marginTop: 12 }]}>
+                  ¿Cómo te sientes ahora mismo?
+                </Text>
 
-              <Text style={[styles.label, { marginTop: 16 }]}>
-                ¿Quieres añadir algo?
-              </Text>
-              <TextInput
-                style={styles.dayInput}
-                placeholder="Escribe algo corto si te apetece..."
-                placeholderTextColor="#9CA3AF"
-                multiline
-                value={note}
-                onChangeText={setNote}
-              />
+                <View style={styles.ratingRow}>
+                  {[1, 2, 3, 4, 5].map((v) => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[
+                        styles.ratingCircle,
+                        rating === v && styles.ratingCircleActive,
+                      ]}
+                      onPress={() => setRating(v)}
+                    >
+                      <Text
+                        style={[
+                          styles.ratingText,
+                          rating === v && styles.ratingTextActive,
+                        ]}
+                      >
+                        {v}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
-              <TouchableOpacity style={styles.daySaveBtn} onPress={saveDay}>
-                <Text style={styles.daySaveText}>Guardar día de hoy</Text>
-              </TouchableOpacity>
+                <Text style={[styles.label, { marginTop: 16 }]}>
+                  ¿Quieres añadir algo?
+                </Text>
+                <TextInput
+                  style={styles.dayInput}
+                  placeholder="Escribe algo corto si te apetece..."
+                  placeholderTextColor="#9CA3AF"
+                  multiline
+                  value={note}
+                  onChangeText={setNote}
+                />
 
-              <View style={styles.dayTabsRow}>
-                <TouchableOpacity style={styles.dayTabActive}>
-                  <Text style={styles.dayTabActiveText}>Lista</Text>
+                <TouchableOpacity style={styles.daySaveBtn} onPress={saveDay}>
+                  <Text style={styles.daySaveText}>Guardar día de hoy</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.dayTab}>
-                  <Text style={styles.dayTabText}>Resumen</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-        </View>
 
-        <AppFooter />
-      </ScrollView>
+                <View style={styles.dayTabsRow}>
+                  <TouchableOpacity style={styles.dayTabActive}>
+                    <Text style={styles.dayTabActiveText}>Lista</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.dayTab}>
+                    <Text style={styles.dayTabText}>Resumen</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </ScrollView>
+
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
+
+
 
 // ---------- PERFIL + PANEL ADMIN ----------
 
@@ -1872,132 +1979,133 @@ function ProfileScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Perfil</Text>
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Perfil</Text>
 
-          {userEmail ? (
-            <>
-              <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
-              <Text style={styles.sectionBody}>
-                Rol:{" "}
-                {isAdmin
-                  ? "Administrador de Calmward"
-                  : "Usuario estándar de Calmward"}
-              </Text>
-              <Text style={styles.sectionBody}>
-                Sexo / género: {genderLabel()}
-              </Text>
-              <Text style={styles.sectionBody}>
-                Patrocinio: {isSponsor ? "Cuenta patrocinadora" : "Cuenta gratuita"}
-              </Text>
-              <Text style={styles.sectionBody}>
-                Versión de la app: 1.0.0 (preview)
-              </Text>
-            </>
-          ) : (
-            <Text style={styles.sectionBody}>
-              No hay sesión activa en este momento.
-            </Text>
-          )}
-
-          {userEmail && (
-            <View style={styles.profileButtonsRow}>
-              <TouchableOpacity
-                style={styles.profileButton}
-                onPress={goToSettings}
-              >
-                <Text style={styles.profileButtonText}>
-                  Configuración de la cuenta
+            {userEmail ? (
+              <>
+                <Text style={styles.sectionBody}>Correo: {userEmail}</Text>
+                <Text style={styles.sectionBody}>
+                  Rol:{" "}
+                  {isAdmin
+                    ? "Administrador de Calmward"
+                    : "Usuario estándar de Calmward"}
                 </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.profileButtonSecondary}
-                onPress={goToContact}
-              >
-                <Text style={styles.profileButtonSecondaryText}>
-                  Contacto y soporte
+                <Text style={styles.sectionBody}>
+                  Sexo / género: {genderLabel()}
                 </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.profileButtonSecondary}
-                onPress={goToLegal}
-              >
-                <Text style={styles.profileButtonSecondaryText}>
-                  Política de privacidad
+                <Text style={styles.sectionBody}>
+                  Patrocinio: {isSponsor ? "Cuenta patrocinadora" : "Cuenta gratuita"}
                 </Text>
-              </TouchableOpacity>
+                <Text style={styles.sectionBody}>
+                  Versión de la app: 1.0.0 (preview)
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.sectionBody}>
+                No hay sesión activa en este momento.
+              </Text>
+            )}
 
-              {isAdmin && (
+            {userEmail && (
+              <View style={styles.profileButtonsRow}>
                 <TouchableOpacity
-                  style={[
-                    styles.profileButton,
-                    { backgroundColor: "#0F766E" },
-                  ]}
-                  onPress={goToAdminPanel}
+                  style={styles.profileButton}
+                  onPress={goToSettings}
                 >
                   <Text style={styles.profileButtonText}>
-                    Abrir panel de administración
+                    Configuración de la cuenta
                   </Text>
                 </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.profileButtonSecondary}
+                  onPress={goToContact}
+                >
+                  <Text style={styles.profileButtonSecondaryText}>
+                    Contacto y soporte
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.profileButtonSecondary}
+                  onPress={goToLegal}
+                >
+                  <Text style={styles.profileButtonSecondaryText}>
+                    Política de privacidad
+                  </Text>
+                </TouchableOpacity>
+
+                {isAdmin && (
+                  <TouchableOpacity
+                    style={[
+                      styles.profileButton,
+                      { backgroundColor: "#0F766E" },
+                    ]}
+                    onPress={goToAdminPanel}
+                  >
+                    <Text style={styles.profileButtonText}>
+                      Abrir panel de administración
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.profileButton, { backgroundColor: "#DC2626" }]}
+                  onPress={handleLogout}
+                >
+                  <Text style={styles.profileButtonText}>Cerrar sesión</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          {userEmail ? (
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Patrocinio</Text>
+              {isSponsor ? (
+                <>
+                  <Text style={styles.sectionBody}>
+                    Tu cuenta está marcada como patrocinador activo de Calmward.
+                  </Text>
+                  <Text style={styles.sectionBody}>
+                    Aquí podrás consultar datos básicos cuando haya un backend conectado.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.sponsorStatsBtn}
+                    onPress={goToSponsorStats}
+                  >
+                    <Text style={styles.sponsorStatsBtnText}>
+                      Ver estadísticas de patrocinio
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.sponsorStatsBtn}
+                    onPress={goToSponsorAdManage}
+                  >
+                    <Text style={styles.sponsorStatsBtnText}>
+                      Gestionar mi anuncio en el carrusel
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <Text style={styles.sectionBody}>
+                  De momento tu cuenta no tiene un patrocinio activo.
+                </Text>
               )}
-
-              <TouchableOpacity
-                style={[styles.profileButton, { backgroundColor: "#DC2626" }]}
-                onPress={handleLogout}
-              >
-                <Text style={styles.profileButtonText}>Cerrar sesión</Text>
-              </TouchableOpacity>
             </View>
-          )}
-        </View>
+          ) : null}
+        </ScrollView>
 
-        {userEmail ? (
-  <View style={styles.sectionCard}>
-    <Text style={styles.sectionTitle}>Patrocinio</Text>
-    {isSponsor ? (
-      <>
-        <Text style={styles.sectionBody}>
-          Tu cuenta está marcada como patrocinador activo de Calmward.
-        </Text>
-        <Text style={styles.sectionBody}>
-          Aquí podrás consultar datos básicos cuando haya un backend conectado.
-        </Text>
-        <TouchableOpacity
-          style={styles.sponsorStatsBtn}
-          onPress={goToSponsorStats}
-        >
-          <Text style={styles.sponsorStatsBtnText}>
-            Ver estadísticas de patrocinio
-          </Text>
-        </TouchableOpacity>
-		
-		    <TouchableOpacity
-      style={styles.sponsorStatsBtn}
-      onPress={goToSponsorAdManage}
-    >
-      <Text style={styles.sponsorStatsBtnText}>
-        Gestionar mi anuncio en el carrusel
-      </Text>
-    </TouchableOpacity>
-
-      </>
-    ) : (
-      <Text style={styles.sectionBody}>
-        De momento tu cuenta no tiene un patrocinio activo.
-      </Text>
-    )}
-  </View>
-) : null}
-
-
-        <AppFooter />
-      </ScrollView>
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
+
 
 // ---------- CONTACTO ----------
 
@@ -2024,38 +2132,40 @@ function ContactScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Contacto</Text>
-          <Text style={styles.sectionBody}>
-            Si quieres escribirnos por dudas, propuestas de colaboración o
-            patrocinios, puedes hacerlo aquí:
-          </Text>
-          <Text style={[styles.sectionBody, { marginTop: 8 }]}>
-            Correo de contacto:{" "}
-            <Text style={{ fontWeight: "600" }}>
-              calmward.contact@gmail.com
+
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Contacto</Text>
+            <Text style={styles.sectionBody}>
+              Si quieres escribirnos por dudas, propuestas de colaboración o
+              patrocinios, puedes hacerlo aquí:
             </Text>
-          </Text>
+            <Text style={[styles.sectionBody, { marginTop: 8 }]}>
+              Correo de contacto:{" "}
+              <Text style={{ fontWeight: "600" }}>
+                calmward.contact@gmail.com
+              </Text>
+            </Text>
 
-          <TouchableOpacity style={styles.contactBtn} onPress={handleEmail}>
-            <Text style={styles.contactBtnText}>Enviar correo</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.contactBtn} onPress={handleEmail}>
+              <Text style={styles.contactBtnText}>Enviar correo</Text>
+            </TouchableOpacity>
 
-          <Text style={[styles.sectionBody, { marginTop: 16 }]}>
-            Recuerda que Calmward no ofrece atención de crisis ni sustitución
-            de servicios de emergencia. Si estás en peligro o crees que
-            podrías hacerte daño, contacta con los servicios de emergencia de
-            tu país.
-          </Text>
-        </View>
+            <Text style={[styles.sectionBody, { marginTop: 16 }]}>
+              Recuerda que Calmward no ofrece atención de crisis ni sustitución
+              de servicios de emergencia. Si estás en peligro o crees que
+              podrías hacerte daño, contacta con los servicios de emergencia de
+              tu país.
+            </Text>
+          </View>
+        </ScrollView>
 
-        <AppFooter />
-      </ScrollView>
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
-
 
 // ---------- SUGERENCIAS ----------
 
@@ -2071,10 +2181,7 @@ function SuggestionsScreen({ navigation }: any) {
 
   async function touchActivity() {
     try {
-      await AsyncStorage.setItem(
-        "calmward_last_activity",
-        String(Date.now())
-      );
+      await AsyncStorage.setItem("calmward_last_activity", String(Date.now()));
     } catch {}
   }
 
@@ -2083,10 +2190,7 @@ function SuggestionsScreen({ navigation }: any) {
     if (!trimmed) return;
 
     if (!isLogged || !authToken) {
-      Alert.alert(
-        "Inicia sesión",
-        "Necesitas una cuenta para enviar sugerencias."
-      );
+      Alert.alert("Inicia sesión", "Necesitas una cuenta para enviar sugerencias.");
       goToAuth("login");
       return;
     }
@@ -2144,78 +2248,81 @@ function SuggestionsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Sugerencias</Text>
-          <Text style={styles.sectionBody}>
-            Queremos que Calmward mejore contigo. Si tienes una idea, un fallo
-            detectado o una función que te gustaría ver, cuéntanosla aquí.
-          </Text>
 
-          {!isLogged ? (
-            <View style={styles.talkAuthGate}>
-              <Text style={styles.talkAuthTitle}>
-                Para enviar sugerencias necesitas una cuenta
-              </Text>
-              <Text style={styles.talkAuthSubtitle}>
-                Así evitamos spam y podemos priorizar mejoras reales de la
-                comunidad.
-              </Text>
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Sugerencias</Text>
+            <Text style={styles.sectionBody}>
+              Queremos que Calmward mejore contigo. Si tienes una idea, un fallo
+              detectado o una función que te gustaría ver, cuéntanosla aquí.
+            </Text>
 
-              <View style={styles.talkAuthButtonsRow}>
-                <TouchableOpacity
-                  style={styles.talkAuthBtnOutline}
-                  onPress={() => goToAuth("login")}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.talkAuthBtnOutlineText}>
-                    Iniciar sesión
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.talkAuthBtnPrimary}
-                  onPress={() => goToAuth("register")}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.talkAuthBtnPrimaryText}>
-                    Crear cuenta
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            <>
-              <Text style={[styles.label, { marginTop: 12 }]}>
-                Escribe tu sugerencia
-              </Text>
-              <TextInput
-                style={styles.dayInput}
-                placeholder="Ej: Me gustaría un modo de hábitos, o un resumen semanal más visual..."
-                placeholderTextColor="#9CA3AF"
-                multiline
-                value={text}
-                onChangeText={setText}
-              />
-
-              <TouchableOpacity
-                style={[
-                  styles.daySaveBtn,
-                  (!text.trim() || sending) && { opacity: 0.6 },
-                ]}
-                onPress={handleSendSuggestion}
-                disabled={!text.trim() || sending}
-              >
-                <Text style={styles.daySaveText}>
-                  {sending ? "Enviando..." : "Enviar sugerencia"}
+            {!isLogged ? (
+              <View style={styles.talkAuthGate}>
+                <Text style={styles.talkAuthTitle}>
+                  Para enviar sugerencias necesitas una cuenta
                 </Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+                <Text style={styles.talkAuthSubtitle}>
+                  Así evitamos spam y podemos priorizar mejoras reales de la
+                  comunidad.
+                </Text>
 
-        <AppFooter />
-      </ScrollView>
+                <View style={styles.talkAuthButtonsRow}>
+                  <TouchableOpacity
+                    style={styles.talkAuthBtnOutline}
+                    onPress={() => goToAuth("login")}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.talkAuthBtnOutlineText}>
+                      Iniciar sesión
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.talkAuthBtnPrimary}
+                    onPress={() => goToAuth("register")}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.talkAuthBtnPrimaryText}>
+                      Crear cuenta
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <>
+                <Text style={[styles.label, { marginTop: 12 }]}>
+                  Escribe tu sugerencia
+                </Text>
+                <TextInput
+                  style={styles.dayInput}
+                  placeholder="Ej: Me gustaría un modo de hábitos, o un resumen semanal más visual..."
+                  placeholderTextColor="#9CA3AF"
+                  multiline
+                  value={text}
+                  onChangeText={setText}
+                />
+
+                <TouchableOpacity
+                  style={[
+                    styles.daySaveBtn,
+                    (!text.trim() || sending) && { opacity: 0.6 },
+                  ]}
+                  onPress={handleSendSuggestion}
+                  disabled={!text.trim() || sending}
+                >
+                  <Text style={styles.daySaveText}>
+                    {sending ? "Enviando..." : "Enviar sugerencia"}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </ScrollView>
+
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
@@ -2227,101 +2334,104 @@ function LegalScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Política de privacidad</Text>
 
-          <Text style={styles.sectionBody}>
-            Calmward es una aplicación orientada al bienestar emocional y al
-            registro personal. No está diseñada para emergencias ni sustituye la
-            atención de profesionales de salud mental.
-            {"\n\n"}
-            Esta política explica qué datos se recogen, para qué se usan y qué
-            opciones tienes sobre ellos.
-            {"\n\n"}
-            1) Responsable y contacto
-            {"\n"}
-            El responsable del tratamiento de los datos de esta versión de la app
-            es el equipo de Calmward. Para dudas sobre privacidad puedes
-            contactar en: calmward.contact@gmail.com.
-            {"\n\n"}
-            2) Datos que podemos tratar
-            {"\n"}
-            • Datos de cuenta: correo electrónico y credenciales asociadas a tu
-            registro/inicio de sesión.
-            {"\n"}
-            • Datos técnicos básicos: información necesaria para mantener la sesión,
-            prevenir abusos y mejorar la estabilidad del servicio.
-            {"\n"}
-            • Contenido que generas en la app:
-            {"\n"}
-            - Registro “Tu día” (valoraciones y notas).
-            {"\n"}
-            - Publicaciones y comentarios en Comunidad.
-            {"\n"}
-            - Mensajes enviados al chat cuando uses funciones conectadas a backend.
-            {"\n\n"}
-            3) Finalidades
-            {"\n"}
-            Usamos estos datos para:
-            {"\n"}
-            • Crear y mantener tu cuenta.
-            {"\n"}
-            • Permitir funciones de Comunidad de forma más segura.
-            {"\n"}
-            • Gestionar el estado de planes (por ejemplo, Sponsor/Premium) cuando
-            esta función esté activa en el backend.
-            {"\n"}
-            • Mejorar la experiencia y prevenir uso indebido.
-            {"\n\n"}
-            4) Base legal
-            {"\n"}
-            La base principal es la ejecución del servicio que solicitas al usar
-            Calmward y tu consentimiento cuando corresponda. En funciones de
-            seguridad y prevención de abuso puede aplicarse el interés legítimo
-            de proteger a la comunidad.
-            {"\n\n"}
-            5) Conservación
-            {"\n"}
-            Conservaremos los datos mientras mantengas tu cuenta o mientras sean
-            necesarios para prestar el servicio. Podremos eliminar o anonimizar
-            información cuando deje de ser necesaria.
-            {"\n\n"}
-            6) Compartición con terceros
-            {"\n"}
-            Calmward no vende tus datos. Si en el futuro se integran servicios
-            externos (por ejemplo pasarelas de pago, correo transaccional o
-            herramientas de analítica), se informará de forma clara sobre qué
-            datos se comparten y con qué propósito.
-            {"\n\n"}
-            7) Cookies y tecnologías similares
-            {"\n"}
-            La app móvil de Calmward no utiliza cookies del navegador.
-            {"\n"}
-            Sin embargo, puede usar almacenamiento local del dispositivo
-            (por ejemplo AsyncStorage) para guardar tu sesión, preferencias y
-            estados de la app.
-            {"\n"}
-            Si en el futuro existe una versión web pública de Calmward, esa web
-            podría usar cookies técnicas necesarias para funcionar y, en su caso,
-            se mostrará un aviso específico de cookies.
-            {"\n\n"}
-            8) Tus derechos
-            {"\n"}
-            Puedes solicitar acceso, rectificación o eliminación de tus datos, así
-            como otras opciones aplicables según la normativa vigente (por ejemplo
-            RGPD). Para ejercerlos, escribe a calmward.contact@gmail.com.
-            {"\n\n"}
-            9) Recomendación legal
-            {"\n"}
-            Antes de publicar la app en tiendas oficiales, te recomendamos revisar
-            esta política con asesoría legal para ajustarla a tu país y al alcance
-            final del producto.
-          </Text>
-        </View>
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Política de privacidad</Text>
 
-        <AppFooter />
-      </ScrollView>
+            <Text style={styles.sectionBody}>
+              Calmward es una aplicación orientada al bienestar emocional y al
+              registro personal. No está diseñada para emergencias ni sustituye la
+              atención de profesionales de salud mental.
+              {"\n\n"}
+              Esta política explica qué datos se recogen, para qué se usan y qué
+              opciones tienes sobre ellos.
+              {"\n\n"}
+              1) Responsable y contacto
+              {"\n"}
+              El responsable del tratamiento de los datos de esta versión de la app
+              es el equipo de Calmward. Para dudas sobre privacidad puedes
+              contactar en: calmward.contact@gmail.com.
+              {"\n\n"}
+              2) Datos que podemos tratar
+              {"\n"}
+              • Datos de cuenta: correo electrónico y credenciales asociadas a tu
+              registro/inicio de sesión.
+              {"\n"}
+              • Datos técnicos básicos: información necesaria para mantener la sesión,
+              prevenir abusos y mejorar la estabilidad del servicio.
+              {"\n"}
+              • Contenido que generas en la app:
+              {"\n"}
+              - Registro “Tu día” (valoraciones y notas).
+              {"\n"}
+              - Publicaciones y comentarios en Comunidad.
+              {"\n"}
+              - Mensajes enviados al chat cuando uses funciones conectadas a backend.
+              {"\n\n"}
+              3) Finalidades
+              {"\n"}
+              Usamos estos datos para:
+              {"\n"}
+              • Crear y mantener tu cuenta.
+              {"\n"}
+              • Permitir funciones de Comunidad de forma más segura.
+              {"\n"}
+              • Gestionar el estado de planes (por ejemplo, Sponsor/Premium) cuando
+              esta función esté activa en el backend.
+              {"\n"}
+              • Mejorar la experiencia y prevenir uso indebido.
+              {"\n\n"}
+              4) Base legal
+              {"\n"}
+              La base principal es la ejecución del servicio que solicitas al usar
+              Calmward y tu consentimiento cuando corresponda. En funciones de
+              seguridad y prevención de abuso puede aplicarse el interés legítimo
+              de proteger a la comunidad.
+              {"\n\n"}
+              5) Conservación
+              {"\n"}
+              Conservaremos los datos mientras mantengas tu cuenta o mientras sean
+              necesarios para prestar el servicio. Podremos eliminar o anonimizar
+              información cuando deje de ser necesaria.
+              {"\n\n"}
+              6) Compartición con terceros
+              {"\n"}
+              Calmward no vende tus datos. Si en el futuro se integran servicios
+              externos (por ejemplo pasarelas de pago, correo transaccional o
+              herramientas de analítica), se informará de forma clara sobre qué
+              datos se comparten y con qué propósito.
+              {"\n\n"}
+              7) Cookies y tecnologías similares
+              {"\n"}
+              La app móvil de Calmward no utiliza cookies del navegador.
+              {"\n"}
+              Sin embargo, puede usar almacenamiento local del dispositivo
+              (por ejemplo AsyncStorage) para guardar tu sesión, preferencias y
+              estados de la app.
+              {"\n"}
+              Si en el futuro existe una versión web pública de Calmward, esa web
+              podría usar cookies técnicas necesarias para funcionar y, en su caso,
+              se mostrará un aviso específico de cookies.
+              {"\n\n"}
+              8) Tus derechos
+              {"\n"}
+              Puedes solicitar acceso, rectificación o eliminación de tus datos, así
+              como otras opciones aplicables según la normativa vigente (por ejemplo
+              RGPD). Para ejercerlos, escribe a calmward.contact@gmail.com.
+              {"\n\n"}
+              9) Recomendación legal
+              {"\n"}
+              Antes de publicar la app en tiendas oficiales, te recomendamos revisar
+              esta política con asesoría legal para ajustarla a tu país y al alcance
+              final del producto.
+            </Text>
+          </View>
+        </ScrollView>
+
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
@@ -2376,7 +2486,7 @@ function SponsorStatsScreen({ navigation }: any) {
           )}
         </View>
 
-        <AppFooter />
+        <AppFooter navigation={navigation} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -2516,7 +2626,7 @@ function SponsorAdManageScreen({ navigation }: any) {
               Esta sección solo está disponible para cuentas patrocinadoras activas.
             </Text>
           </View>
-          <AppFooter />
+          <AppFooter navigation={navigation} />
         </ScrollView>
       </SafeAreaView>
     );
@@ -2656,7 +2766,7 @@ function SponsorAdManageScreen({ navigation }: any) {
           )}
         </View>
 
-        <AppFooter />
+        <AppFooter navigation={navigation} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -2823,7 +2933,7 @@ function SponsorPaymentScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        <AppFooter />
+        <AppFooter navigation={navigation} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -2907,7 +3017,7 @@ function SettingsScreen({ navigation }: any) {
           </View>
         </View>
 
-        <AppFooter />
+        <AppFooter navigation={navigation} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -2985,79 +3095,82 @@ function UrgentHelpScreen({ navigation }: any) {
     <SafeAreaView style={styles.screen}>
       <AppHeader navigation={navigation} />
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={[styles.sectionCard, styles.urgentMainCard]}>
-          <Text style={styles.urgentBigTitle}>Ayuda urgente</Text>
-          <Text style={styles.urgentBody}>
-            Calmward no es un servicio de emergencias ni puede responder en
-            tiempo real.
-          </Text>
-
-          <Text style={[styles.urgentBody, { marginTop: 12 }]}>
-            Si estás en peligro inmediato o sientes que podrías hacerte daño,
-            intenta:
-          </Text>
-
-          <Text style={styles.urgentList}>
-            • Llamar a los servicios de emergencias de tu país.{"\n"}
-            • Contactar con un familiar, amigo o persona de confianza.{"\n"}
-            • Usar líneas de ayuda emocional disponibles en tu zona.
-          </Text>
-
-          <TouchableOpacity
-            style={styles.urgentButtonBig}
-            onPress={handleHelpPhones}
-          >
-            <Text style={styles.urgentButtonBigText}>
-              Buscar teléfonos de ayuda
+      <View style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={[styles.sectionCard, styles.urgentMainCard]}>
+            <Text style={styles.urgentBigTitle}>Ayuda urgente</Text>
+            <Text style={styles.urgentBody}>
+              Calmward no es un servicio de emergencias ni puede responder en
+              tiempo real.
             </Text>
-          </TouchableOpacity>
 
-          {showPhones && (
-            <View style={styles.urgentPhonesCard}>
-              <Text style={styles.urgentPhonesTitle}>
-                Teléfonos de ayuda en España
+            <Text style={[styles.urgentBody, { marginTop: 12 }]}>
+              Si estás en peligro inmediato o sientes que podrías hacerte daño,
+              intenta:
+            </Text>
+
+            <Text style={styles.urgentList}>
+              • Llamar a los servicios de emergencias de tu país.{"\n"}
+              • Contactar con un familiar, amigo o persona de confianza.{"\n"}
+              • Usar líneas de ayuda emocional disponibles en tu zona.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.urgentButtonBig}
+              onPress={handleHelpPhones}
+            >
+              <Text style={styles.urgentButtonBigText}>
+                Buscar teléfonos de ayuda
               </Text>
+            </TouchableOpacity>
 
-              {HELP_LINES.map((l) => (
-                <View key={l.label} style={styles.urgentPhoneRow}>
-                  <View style={styles.urgentPhoneLeft}>
-                    <Text style={styles.urgentPhoneLabel}>{l.label}</Text>
-                    <Text style={styles.urgentPhoneNumber}>{l.number}</Text>
-                    <Text style={styles.urgentPhoneNote}>{l.note}</Text>
+            {showPhones && (
+              <View style={styles.urgentPhonesCard}>
+                <Text style={styles.urgentPhonesTitle}>
+                  Teléfonos de ayuda en España
+                </Text>
+
+                {HELP_LINES.map((l) => (
+                  <View key={l.label} style={styles.urgentPhoneRow}>
+                    <View style={styles.urgentPhoneLeft}>
+                      <Text style={styles.urgentPhoneLabel}>{l.label}</Text>
+                      <Text style={styles.urgentPhoneNumber}>{l.number}</Text>
+                      <Text style={styles.urgentPhoneNote}>{l.note}</Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.urgentPhoneCall}
+                      onPress={() => callNumber(l.number)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.urgentPhoneCallText}>Llamar</Text>
+                    </TouchableOpacity>
                   </View>
+                ))}
 
-                  <TouchableOpacity
-                    style={styles.urgentPhoneCall}
-                    onPress={() => callNumber(l.number)}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.urgentPhoneCallText}>Llamar</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
+                <Text style={styles.urgentPhonesHint}>
+                  Si no estás en España, estos números pueden variar.
+                </Text>
+              </View>
+            )}
 
-              <Text style={styles.urgentPhonesHint}>
-                Si no estás en España, estos números pueden variar.
-              </Text>
-            </View>
-          )}
+            <Text style={[styles.urgentBody, { marginTop: 16 }]}>
+              También puedes usar Calmward para:
+            </Text>
+            <Text style={styles.urgentList}>
+              • Dejar por escrito lo que te está pasando ahora mismo.{"\n"}
+              • Preparar lo que quieres decir antes de hablar con alguien.{"\n"}
+              • Apuntar pequeñas cosas que te ayuden un poco hoy.
+            </Text>
+          </View>
+        </ScrollView>
 
-          <Text style={[styles.urgentBody, { marginTop: 16 }]}>
-            También puedes usar Calmward para:
-          </Text>
-          <Text style={styles.urgentList}>
-            • Dejar por escrito lo que te está pasando ahora mismo.{"\n"}
-            • Preparar lo que quieres decir antes de hablar con alguien.{"\n"}
-            • Apuntar pequeñas cosas que te ayuden un poco hoy.
-          </Text>
-        </View>
-
-        <AppFooter />
-      </ScrollView>
+        <AppFooter navigation={navigation} />
+      </View>
     </SafeAreaView>
   );
 }
+
 
 // ---------- PANEL ADMIN (APP) ----------
 
@@ -3247,7 +3360,7 @@ function AdminPanelScreen({ navigation }: any) {
               Calmward.
             </Text>
           </View>
-          <AppFooter />
+          <AppFooter navigation={navigation} />
         </ScrollView>
       </SafeAreaView>
     );
@@ -3554,55 +3667,33 @@ function AdminPanelScreen({ navigation }: any) {
           )}
         </View>
 
-        <AppFooter />
+        <AppFooter navigation={navigation} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-
-// ---------- TABS PRINCIPALES ----------
-
+// ---------- TABS PRINCIPALES (BOTTOM TAB) ----------
 function AppTabs() {
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
+      screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#0EA5E9",
-        tabBarInactiveTintColor: "#6B7280",
-        tabBarStyle: {
-          backgroundColor: "#FFFFFF",
-          borderTopColor: "#E5E7EB",
-        },
-        tabBarIcon: ({ color, size }) => {
-          let icon = "home-outline";
-
-          if (route.name === "Inicio") icon = "home-outline";
-          if (route.name === "Tu día") icon = "white-balance-sunny";
-          if (route.name === "Comunidad") icon = "account-group-outline";
-          if (route.name === "Hablar") icon = "message-text-outline";
-          if (route.name === "Perfil") icon = "account-circle-outline";
-          if (route.name === "Ayuda urgente") icon = "alert-circle-outline";
-
-          return (
-            <MaterialCommunityIcons
-              name={icon as any}
-              size={size}
-              color={color}
-            />
-          );
-        },
-      })}
+        // Ocultamos la tab bar nativa: usaremos el footer personalizado
+        tabBarStyle: { display: "none" },
+      }}
     >
       <Tab.Screen name="Inicio" component={HomeScreen} />
-      <Tab.Screen name="Tu día" component={DayScreen} />
       <Tab.Screen name="Comunidad" component={CommunityScreen} />
       <Tab.Screen name="Hablar" component={TalkScreen} />
+      <Tab.Screen name="TuDia" component={DayScreen} />
       <Tab.Screen name="Perfil" component={ProfileScreen} />
-      <Tab.Screen name="Ayuda urgente" component={UrgentHelpScreen} />
+      <Tab.Screen name="AyudaUrgente" component={UrgentHelpScreen} />
     </Tab.Navigator>
   );
 }
+
+
 
 // ---------- NAVEGACIÓN RAÍZ + CONTEXTO AUTH ----------
 
@@ -3623,9 +3714,13 @@ export default function MainNavigation() {
         const token = await AsyncStorage.getItem("calmward_token");
         const email = await AsyncStorage.getItem("calmward_email");
         const sponsorFlag = await AsyncStorage.getItem("calmward_is_sponsor");
-		const premiumFlag = await AsyncStorage.getItem("calmward_is_premium");
-		const sponsorActiveFlag = await AsyncStorage.getItem("calmward_is_sponsor_active");
-		const premiumActiveFlag = await AsyncStorage.getItem("calmward_is_premium_active");
+        const premiumFlag = await AsyncStorage.getItem("calmward_is_premium");
+        const sponsorActiveFlag = await AsyncStorage.getItem(
+          "calmward_is_sponsor_active"
+        );
+        const premiumActiveFlag = await AsyncStorage.getItem(
+          "calmward_is_premium_active"
+        );
         const timeoutStr = await AsyncStorage.getItem(
           "calmward_session_timeout_minutes"
         );
@@ -3633,9 +3728,9 @@ export default function MainNavigation() {
         setIsLogged(!!token);
         setUserEmail(email);
         setIsSponsorState(sponsorFlag === "1");
-		setIsPremiumState(premiumFlag === "1");
-		setIsSponsorActiveState(sponsorActiveFlag === "1");
-		setIsPremiumActiveState(premiumActiveFlag === "1");
+        setIsPremiumState(premiumFlag === "1");
+        setIsSponsorActiveState(sponsorActiveFlag === "1");
+        setIsPremiumActiveState(premiumActiveFlag === "1");
         setAuthToken(token);
 
         if (timeoutStr) {
@@ -3648,6 +3743,9 @@ export default function MainNavigation() {
         setIsLogged(false);
         setUserEmail(null);
         setIsSponsorState(false);
+        setIsPremiumState(false);
+        setIsSponsorActiveState(false);
+        setIsPremiumActiveState(false);
         setSessionTimeoutMinutesState(30);
         setAuthToken(null);
       } finally {
@@ -3656,13 +3754,43 @@ export default function MainNavigation() {
     }
     load();
   }, []);
-  
-	useEffect(() => {
-	if (authToken) {
-		refreshBilling();
-	}
-	}, [authToken]);
-	
+
+  async function refreshBilling() {
+    try {
+      if (!API_BASE_URL || !authToken) return;
+
+      const res = await fetch(`${API_BASE_URL}/billing/subscription`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!res.ok) return;
+
+      const data = await res.json();
+
+      const s = !!data?.isSponsor;
+      const p = !!data?.isPremium;
+      const sA = !!data?.isSponsorActive;
+      const pA = !!data?.isPremiumActive;
+
+      await AsyncStorage.setItem("calmward_is_sponsor", s ? "1" : "0");
+      await AsyncStorage.setItem("calmward_is_premium", p ? "1" : "0");
+      await AsyncStorage.setItem("calmward_is_sponsor_active", sA ? "1" : "0");
+      await AsyncStorage.setItem("calmward_is_premium_active", pA ? "1" : "0");
+
+      setIsSponsorState(s);
+      setIsPremiumState(p);
+      setIsSponsorActiveState(sA);
+      setIsPremiumActiveState(pA);
+    } catch {
+      // silencioso
+    }
+  }
+
+  useEffect(() => {
+    if (authToken) {
+      refreshBilling();
+    }
+  }, [authToken]);
+
   useEffect(() => {
     if (!isLogged) return;
 
@@ -3679,9 +3807,16 @@ export default function MainNavigation() {
           await AsyncStorage.removeItem("calmward_token");
           await AsyncStorage.removeItem("calmward_email");
           await AsyncStorage.removeItem("calmward_is_sponsor");
+          await AsyncStorage.removeItem("calmward_is_premium");
+          await AsyncStorage.removeItem("calmward_is_sponsor_active");
+          await AsyncStorage.removeItem("calmward_is_premium_active");
+          await AsyncStorage.removeItem("calmward_last_activity");
           setIsLogged(false);
           setUserEmail(null);
           setIsSponsorState(false);
+          setIsPremiumState(false);
+          setIsSponsorActiveState(false);
+          setIsPremiumActiveState(false);
           setAuthToken(null);
         }
       } catch {
@@ -3692,125 +3827,103 @@ export default function MainNavigation() {
     return () => clearInterval(id);
   }, [isLogged, sessionTimeoutMinutes]);
 
-async function refreshBilling() {
-  try {
-    if (!API_BASE_URL || !authToken) return;
-
-    const res = await fetch(`${API_BASE_URL}/billing/subscription`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-    if (!res.ok) return;
-
-    const data = await res.json();
-
-    const s = !!data?.isSponsor;
-    const p = !!data?.isPremium;
-    const sA = !!data?.isSponsorActive;
-    const pA = !!data?.isPremiumActive;
-
-    await AsyncStorage.setItem("calmward_is_sponsor", s ? "1" : "0");
-    await AsyncStorage.setItem("calmward_is_premium", p ? "1" : "0");
-    await AsyncStorage.setItem("calmward_is_sponsor_active", sA ? "1" : "0");
-    await AsyncStorage.setItem("calmward_is_premium_active", pA ? "1" : "0");
-
-    setIsSponsorState(s);
-    setIsPremiumState(p);
-    setIsSponsorActiveState(sA);
-    setIsPremiumActiveState(pA);
-  } catch {
-    // silencioso
-  }
-}
-
   const authContext = useMemo<AuthContextType>(
     () => ({
-		isLogged,
-		userEmail,
+      isLogged,
+      userEmail,
 
-		isSponsor,
-		isPremium,
+      isSponsor,
+      isPremium,
 
-		isSponsorActive,
-		isPremiumActive,
+      isSponsorActive,
+      isPremiumActive,
 
-		sessionTimeoutMinutes,
-		authToken,
-		
+      sessionTimeoutMinutes,
+      authToken,
+
       login: async (
-		email: string,
-		token: string,
-		sponsorFlag?: boolean,
-		premiumFlag?: boolean,
-		sponsorActiveFlag?: boolean,
-		premiumActiveFlag?: boolean
-		) => {
+        email: string,
+        token: string,
+        sponsorFlag?: boolean,
+        premiumFlag?: boolean,
+        sponsorActiveFlag?: boolean,
+        premiumActiveFlag?: boolean
+      ) => {
         await AsyncStorage.setItem("calmward_token", token);
         await AsyncStorage.setItem("calmward_email", email);
         await AsyncStorage.setItem(
           "calmward_last_activity",
           String(Date.now())
         );
+
         if (typeof sponsorFlag === "boolean") {
-		await AsyncStorage.setItem(
-			"calmward_is_sponsor",
-			sponsorFlag ? "1" : "0"
-		);
-		setIsSponsorState(sponsorFlag);
-		}
-		if (typeof premiumFlag === "boolean") {
-		await AsyncStorage.setItem(
-			"calmward_is_premium",
-			premiumFlag ? "1" : "0"
-		);
-		setIsPremiumState(premiumFlag);
-		}
-
-		if (typeof sponsorActiveFlag === "boolean") {
-		await AsyncStorage.setItem(
-			"calmward_is_sponsor_active",
-			sponsorActiveFlag ? "1" : "0"
-		);
-		setIsSponsorActiveState(sponsorActiveFlag);
-		}
-
-		if (typeof premiumActiveFlag === "boolean") {
-		await AsyncStorage.setItem(
-			"calmward_is_premium_active",
-			premiumActiveFlag ? "1" : "0"
-		);
-		setIsPremiumActiveState(premiumActiveFlag);
-		}
+          await AsyncStorage.setItem(
+            "calmward_is_sponsor",
+            sponsorFlag ? "1" : "0"
+          );
+          setIsSponsorState(sponsorFlag);
+        }
+        if (typeof premiumFlag === "boolean") {
+          await AsyncStorage.setItem(
+            "calmward_is_premium",
+            premiumFlag ? "1" : "0"
+          );
+          setIsPremiumState(premiumFlag);
+        }
+        if (typeof sponsorActiveFlag === "boolean") {
+          await AsyncStorage.setItem(
+            "calmward_is_sponsor_active",
+            sponsorActiveFlag ? "1" : "0"
+          );
+          setIsSponsorActiveState(sponsorActiveFlag);
+        }
+        if (typeof premiumActiveFlag === "boolean") {
+          await AsyncStorage.setItem(
+            "calmward_is_premium_active",
+            premiumActiveFlag ? "1" : "0"
+          );
+          setIsPremiumActiveState(premiumActiveFlag);
+        }
 
         setIsLogged(true);
         setUserEmail(email);
         setAuthToken(token);
-		await refreshBilling();
+        await refreshBilling();
       },
+
       logout: async () => {
         await AsyncStorage.removeItem("calmward_token");
         await AsyncStorage.removeItem("calmward_email");
         await AsyncStorage.removeItem("calmward_is_sponsor");
-		await AsyncStorage.removeItem("calmward_is_premium");
-		await AsyncStorage.removeItem("calmward_is_sponsor_active");
-		await AsyncStorage.removeItem("calmward_is_premium_active");
+        await AsyncStorage.removeItem("calmward_is_premium");
+        await AsyncStorage.removeItem("calmward_is_sponsor_active");
+        await AsyncStorage.removeItem("calmward_is_premium_active");
         await AsyncStorage.removeItem("calmward_last_activity");
         setIsLogged(false);
         setUserEmail(null);
         setIsSponsorState(false);
-		setIsPremiumState(false);
-		setIsSponsorActiveState(false);
-		setIsPremiumActiveState(false);
+        setIsPremiumState(false);
+        setIsSponsorActiveState(false);
+        setIsPremiumActiveState(false);
         setAuthToken(null);
       },
 
       setSponsor: async (value: boolean) => {
-        await AsyncStorage.setItem("calmward_is_sponsor", value ? "1" : "0");
+        await AsyncStorage.setItem(
+          "calmward_is_sponsor",
+          value ? "1" : "0"
+        );
         setIsSponsorState(value);
       },
-	  setPremium: async (value: boolean) => {
-	  await AsyncStorage.setItem("calmward_is_premium", value ? "1" : "0");
-	  setIsPremiumState(value);
-	  },
+
+      setPremium: async (value: boolean) => {
+        await AsyncStorage.setItem(
+          "calmward_is_premium",
+          value ? "1" : "0"
+        );
+        setIsPremiumState(value);
+      },
+
       setSessionTimeoutMinutes: async (minutes: number) => {
         const safe = minutes < 0 ? 0 : minutes;
         await AsyncStorage.setItem(
@@ -3819,21 +3932,22 @@ async function refreshBilling() {
         );
         setSessionTimeoutMinutesState(safe);
       },
-	  refreshBilling: async () => {
-	  await refreshBilling();
-	  },
+
+      refreshBilling: async () => {
+        await refreshBilling();
+      },
     }),
-  [
-    isLogged,
-    userEmail,
-    isSponsor,
-    isPremium,
-    isSponsorActive,
-    isPremiumActive,
-    sessionTimeoutMinutes,
-    authToken
-  ]
-);
+    [
+      isLogged,
+      userEmail,
+      isSponsor,
+      isPremium,
+      isSponsorActive,
+      isPremiumActive,
+      sessionTimeoutMinutes,
+      authToken,
+    ]
+  );
 
   if (!ready) {
     return (
@@ -3846,20 +3960,34 @@ async function refreshBilling() {
   return (
     <AuthContext.Provider value={authContext}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {/* Tabs principales (con AppTabs y su bottom bar) */}
         <Stack.Screen name="Root" component={AppTabs} />
+
+        {/* Auth único: login + registro */}
         <Stack.Screen name="Auth" component={AuthScreen} />
+
+        {/* Páginas informativas */}
         <Stack.Screen name="Contacto" component={ContactScreen} />
-		<Stack.Screen name="Sugerencias" component={SuggestionsScreen} />
+        <Stack.Screen name="Sugerencias" component={SuggestionsScreen} />
         <Stack.Screen name="Legal" component={LegalScreen} />
+
+        {/* Pagos / Patrocinio */}
         <Stack.Screen name="SponsorStats" component={SponsorStatsScreen} />
         <Stack.Screen name="SponsorPayment" component={SponsorPaymentScreen} />
-		<Stack.Screen name="SponsorAdManage" component={SponsorAdManageScreen} />
+        <Stack.Screen
+          name="SponsorAdManage"
+          component={SponsorAdManageScreen}
+        />
+
+        {/* Ajustes + Panel admin */}
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="AdminPanel" component={AdminPanelScreen} />
       </Stack.Navigator>
     </AuthContext.Provider>
   );
 }
+
+
 
 // ---------- ESTILOS ----------
 
@@ -3876,7 +4004,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 120,
     flexGrow: 1,
   },
   sectionCard: {
@@ -3911,30 +4039,47 @@ const styles = StyleSheet.create({
     color: "#6B7280",
   },
   footerContainer: {
-    marginTop: 16,
-    paddingTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    alignItems: "center",
+    borderTopColor: "#1f2937",
+    backgroundColor: "#020617",
   },
-  footerLogoRow: {
+  footerNavRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 4,
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  footerNavButton: {
+    flex: 1,
+    alignItems: "center",
+  },
+  footerNavLabel: {
+    marginTop: 2,
+    fontSize: 10,
+    color: "#E5E7EB",
+  },
+  footerLegalText: {
+    fontSize: 10,
+    color: "#64748b",
+    textAlign: "center",
+    marginBottom: 2,
   },
   footerCopyright: {
-    fontSize: 11,
+    fontSize: 10,
     color: "#9CA3AF",
+    textAlign: "center",
   },
   footerTiny: {
-    marginTop: 2,
+    // lo dejamos por si lo usas en otra parte
     fontSize: 10,
     color: "#9CA3AF",
     textAlign: "center",
   },
   authScroll: {
     padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 120,
   },
   authHeaderTop: {
     alignItems: "center",

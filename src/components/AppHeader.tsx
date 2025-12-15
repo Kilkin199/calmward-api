@@ -44,79 +44,21 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
     setMainMenuOpen(false);
   }
 
-  // --- helpers de navegación seguros (sin romper con Root/Auth) ---
+  // --- helpers de navegación con las tabs como raíz ---
 
   function navigateToPerfil() {
     closeAllMenus();
-    const state = navigation.getState?.();
-    // Si este navigator conoce Root, usamos Root + tab Perfil
-    if (state && Array.isArray(state.routeNames)) {
-      if (state.routeNames.includes("Root")) {
-        navigation.navigate("Root" as never, {
-          screen: "Perfil",
-        } as never);
-        return;
-      }
-      if (state.routeNames.includes("Perfil")) {
-        navigation.navigate("Perfil" as never);
-        return;
-      }
-    }
-    navigation.navigate("Perfil" as never);
+    navigation.navigate("Perfil");
   }
 
   function navigateToSettings() {
     closeAllMenus();
-    const target = "Settings";
-    const state = navigation.getState?.();
-
-    if (state && Array.isArray(state.routeNames) && state.routeNames.includes(target)) {
-      navigation.navigate(target as never);
-      return;
-    }
-
-    const parent = navigation.getParent?.();
-    if (parent) {
-      const pState = parent.getState?.();
-      if (
-        pState &&
-        Array.isArray(pState.routeNames) &&
-        pState.routeNames.includes(target)
-      ) {
-        parent.navigate(target as never);
-        return;
-      }
-    }
-
-    navigation.navigate(target as never);
+    navigation.navigate("Settings");
   }
 
   function navigateStackScreen(target: "Contacto" | "Sugerencias" | "Legal") {
     closeAllMenus();
-    const state = navigation.getState?.();
-
-    // Si estamos en el Stack principal y conoce la ruta, navegamos directo
-    if (state && Array.isArray(state.routeNames) && state.routeNames.includes(target)) {
-      navigation.navigate(target as never);
-      return;
-    }
-
-    // Si estamos en Tabs, subimos al padre (Stack) y navegamos desde ahí
-    const parent = navigation.getParent?.();
-    if (parent) {
-      const pState = parent.getState?.();
-      if (
-        pState &&
-        Array.isArray(pState.routeNames) &&
-        pState.routeNames.includes(target)
-      ) {
-        parent.navigate(target as never);
-        return;
-      }
-    }
-
-    // Fallback
-    navigation.navigate(target as never);
+    navigation.navigate(target);
   }
 
   function handleAvatarPress() {
@@ -129,84 +71,40 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
     setUserMenuOpen(false);
   }
 
-  function handleLogout() {
-    // Cerrar sesión se hace de verdad en la pantalla Perfil (botón Cerrar sesión)
-    // Aquí te llevo allí directamente para que la cierres desde el sitio correcto.
-    navigateToPerfil();
-  }
-
+  // siempre forzamos startMode = "login" o "register"
   function handleLogin() {
     closeAllMenus();
-    const state = navigation.getState?.();
-    if (state && Array.isArray(state.routeNames) && state.routeNames.includes("Auth")) {
-      navigation.navigate("Auth" as never);
-      return;
-    }
-    const parent = navigation.getParent?.();
-    if (parent) {
-      const pState = parent.getState?.();
-      if (
-        pState &&
-        Array.isArray(pState.routeNames) &&
-        pState.routeNames.includes("Auth")
-      ) {
-        parent.navigate("Auth" as never);
-        return;
-      }
-    }
-    navigation.navigate("Auth" as never);
+    navigation.navigate("Auth", { startMode: "login" as "login" | "register" });
   }
 
   function handleRegister() {
-  closeAllMenus();
-
-  const state = navigation.getState?.();
-  // Si este navigator conoce Auth, navegamos con startMode: "register"
-  if (state && Array.isArray(state.routeNames) && state.routeNames.includes("Auth")) {
-    navigation.navigate("Auth" as never, { startMode: "register" } as never);
-    return;
+    closeAllMenus();
+    navigation.navigate("Auth", {
+      startMode: "register" as "login" | "register",
+    });
   }
 
-  // Si estamos en tabs y el padre conoce Auth
-  const parent = navigation.getParent?.();
-  if (parent) {
-    const pState = parent.getState?.();
-    if (
-      pState &&
-      Array.isArray(pState.routeNames) &&
-      pState.routeNames.includes("Auth")
-    ) {
-      parent.navigate("Auth" as never, { startMode: "register" } as never);
-      return;
-    }
+  function handleLogout() {
+    // El cierre de sesión real se hace en la pantalla Perfil
+    navigateToPerfil();
   }
-
-  // Fallback
-  navigation.navigate("Auth" as never, { startMode: "register" } as never);
-}
-
 
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        {/* Logo + nombre app (sin tagline) */}
+        {/* Logo + nombre app */}
         <View style={styles.brandRow}>
-		<AppLogo size="sm" showText />
-		</View>
+          <AppLogo size="sm" showText />
+        </View>
 
-        {/* Acciones derecha: menú hamburguesa + login/avatar */}
+        {/* Acciones derecha */}
         <View style={styles.actions}>
-          {/* Menú hamburguesa */}
           <TouchableOpacity
             style={styles.iconButton}
             onPress={handleBurgerPress}
             activeOpacity={0.8}
           >
-            <MaterialCommunityIcons
-              name="menu"
-              size={24}
-              color="#111827"
-            />
+            <MaterialCommunityIcons name="menu" size={24} color="#111827" />
           </TouchableOpacity>
 
           {!isLogged ? (
@@ -240,49 +138,48 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
         </View>
       </View>
 
-      {/* MENÚ DESPLEGABLE HAMBURGUESA (Contacto / Legal) */}
+      {/* MENÚ DESPLEGABLE HAMBURGUESA */}
       {mainMenuOpen && (
         <View style={styles.mainMenu}>
           <TouchableOpacity
-  style={styles.menuItem}
-  onPress={() => navigateStackScreen("Contacto")}
->
-  <MaterialCommunityIcons
-    name="email-outline"
-    size={18}
-    color="#111827"
-  />
-  <Text style={styles.menuItemText}>Contacto</Text>
-</TouchableOpacity>
+            style={styles.menuItem}
+            onPress={() => navigateStackScreen("Contacto")}
+          >
+            <MaterialCommunityIcons
+              name="email-outline"
+              size={18}
+              color="#111827"
+            />
+            <Text style={styles.menuItemText}>Contacto</Text>
+          </TouchableOpacity>
 
-<TouchableOpacity
-  style={styles.menuItem}
-  onPress={() => navigateStackScreen("Sugerencias")}
->
-  <MaterialCommunityIcons
-    name="lightbulb-on-outline"
-    size={18}
-    color="#111827"
-  />
-  <Text style={styles.menuItemText}>Sugerencias</Text>
-</TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => navigateStackScreen("Sugerencias")}
+          >
+            <MaterialCommunityIcons
+              name="lightbulb-on-outline"
+              size={18}
+              color="#111827"
+            />
+            <Text style={styles.menuItemText}>Sugerencias</Text>
+          </TouchableOpacity>
 
-<TouchableOpacity
-  style={styles.menuItem}
-  onPress={() => navigateStackScreen("Legal")}
->
-  <MaterialCommunityIcons
-    name="shield-lock-outline"
-    size={18}
-    color="#111827"
-  />
-  <Text style={styles.menuItemText}>Política de privacidad</Text>
-</TouchableOpacity>
-
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => navigateStackScreen("Legal")}
+          >
+            <MaterialCommunityIcons
+              name="shield-lock-outline"
+              size={18}
+              color="#111827"
+            />
+            <Text style={styles.menuItemText}>Política de privacidad</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* MENÚ DESPLEGABLE USUARIO (Perfil / Configuración / Cerrar sesión) */}
+      {/* MENÚ USUARIO */}
       {isLogged && userMenuOpen && (
         <View style={styles.userMenu}>
           <TouchableOpacity style={styles.menuItem} onPress={navigateToPerfil}>
@@ -300,7 +197,9 @@ const AppHeader: React.FC<Props> = ({ navigation }) => {
               size={18}
               color="#374151"
             />
-            <Text style={styles.menuItemText}>Configuración de la cuenta</Text>
+            <Text style={styles.menuItemText}>
+              Configuración de la cuenta
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.menuDivider} />
@@ -337,12 +236,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   brandRow: {
-  flexDirection: "row",
-  alignItems: "center",
-  flexShrink: 0,
-  minWidth: 0,
-  maxWidth: width * 0.4,
-},
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 0,
+    minWidth: 0,
+    maxWidth: width * 0.4,
+  },
   actions: {
     flexDirection: "row",
     alignItems: "center",
@@ -353,10 +252,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   chip: {
-   borderRadius: 999,
-   paddingHorizontal: 11,
-   paddingVertical: 6,
-   marginLeft: 1,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    marginLeft: 1,
   },
   chipOutline: {
     borderWidth: 1,
@@ -364,17 +263,17 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   chipOutlineText: {
-	fontSize: 11,
-	color: "#4B5563",
-	fontWeight: "500",
+    fontSize: 11,
+    color: "#4B5563",
+    fontWeight: "500",
   },
   chipPrimary: {
     backgroundColor: "#0EA5E9",
   },
   chipPrimaryText: {
-	fontSize: 11,
-	color: "#FFFFFF",
-	fontWeight: "600",
+    fontSize: 11,
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
   avatarButton: {
     borderRadius: 999,
@@ -382,24 +281,21 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     zIndex: 40,
   },
-  // menú hamburguesa
   mainMenu: {
     position: "absolute",
-    top: 56, // debajo del header
+    top: 56,
     right: 16,
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
     paddingVertical: 6,
     paddingHorizontal: 8,
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 8,
+    // antes tenías shadowColor / shadowOpacity / shadowRadius / shadowOffset / elevation
+    // los quitamos para que RN Web no avise
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
     minWidth: 200,
     zIndex: 20,
   },
-  // menú usuario
   userMenu: {
     position: "absolute",
     top: 56,
@@ -408,11 +304,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 6,
     paddingHorizontal: 8,
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 8,
+    // igual: eliminamos las props shadow* para evitar el warning
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
     minWidth: 220,
     zIndex: 25,
   },
