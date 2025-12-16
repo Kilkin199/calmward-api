@@ -296,20 +296,6 @@ const styles = StyleSheet.create({
     minWidth: 200,
     zIndex: 20,
   },
-  userMenu: {
-    position: "absolute",
-    top: 56,
-    right: 16,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    // igual: eliminamos las props shadow* para evitar el warning
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    minWidth: 220,
-    zIndex: 25,
-  },
   menuItem: {
     flexDirection: "row",
     alignItems: "center",

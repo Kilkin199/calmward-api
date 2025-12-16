@@ -5,9 +5,9 @@ export default function AppFooter() {
   return (
     <View style={styles.root}>
       <Text style={styles.legal}>
-        Calmward no sustituye servicios mÃ©dicos ni de emergencia. Si estÃ¡s en
-        peligro o al lÃ­mite, busca ayuda profesional o llama a los servicios de
-        emergencia de tu paÃ­s.
+        Calmward no sustituye servicios médicos ni de emergencia. Si estás en
+        peligro o al límite, busca ayuda profesional o llama a los servicios de
+        emergencia de tu país.
       </Text>
     </View>
   );

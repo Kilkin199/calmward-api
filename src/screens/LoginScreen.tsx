@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import {
+  SafeAreaView,
+  ScrollView,
   View,
   Text,
   TextInput,
@@ -11,6 +13,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/MainNavigation";
 import { loginUser } from "../api/authApi";
 import AppLogo from "../components/AppLogo";
+import AppFooter from "../components/AppFooter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Login">;
 
@@ -25,7 +28,7 @@ export default function LoginScreen({ navigation }: Props) {
     const cleanPassword = password.trim();
 
     if (!cleanEmail || !cleanPassword) {
-      Alert.alert("Calmward", "Escribe correo y contraseÃ±a.");
+      Alert.alert("Calmward", "Escribe correo y contraseña.");
       return;
     }
 
@@ -35,8 +38,8 @@ export default function LoginScreen({ navigation }: Props) {
 
       if (!data || !data.token) {
         Alert.alert(
-          "No se pudo iniciar sesiÃ³n",
-          data?.error || "Revisa los datos o intÃ©ntalo de nuevo."
+          "No se pudo iniciar sesión",
+          data?.error || "Revisa los datos o inténtalo de nuevo."
         );
         return;
       }
@@ -56,76 +59,94 @@ export default function LoginScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.root}>
-      <View style={styles.card}>
-        <AppLogo size="md" showText />
+    <SafeAreaView style={styles.root}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.card}>
+          <AppLogo size="md" showText />
 
-        <Text style={styles.title}>Iniciar sesiÃ³n</Text>
-        <Text style={styles.subtitle}>
-          Accede a tu espacio en Calmward. Tus datos se guardan en tu cuenta
-          remota y en tu dispositivo.
-        </Text>
+          <Text style={styles.title}>Iniciar sesión</Text>
+          <Text style={styles.subtitle}>
+            Accede a tu espacio en Calmward. Tus datos se guardan en tu cuenta
+            remota y en tu dispositivo.
+          </Text>
 
-        <Text style={styles.label}>Correo electrÃ³nico</Text>
-        <TextInput
-          style={styles.input}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-          placeholder="tucorreo@example.com"
-          placeholderTextColor="#6b7280"
-        />
+          <Text style={styles.label}>Correo electrónico</Text>
+          <TextInput
+            style={styles.input}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="tucorreo@example.com"
+            placeholderTextColor="#6b7280"
+          />
 
-        <Text style={styles.label}>ContraseÃ±a</Text>
-        <TextInput
-          style={styles.input}
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-          placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-          placeholderTextColor="#6b7280"
-        />
+          <Text style={styles.label}>Contraseña</Text>
+          <TextInput
+            style={styles.input}
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            placeholder="••••••••"
+            placeholderTextColor="#6b7280"
+          />
 
-        <View style={styles.row}>
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={styles.checkRow}
+              onPress={() => setRemember(!remember)}
+            >
+              <View
+                style={[
+                  styles.checkbox,
+                  remember && styles.checkboxChecked,
+                ]}
+              >
+                {remember && <Text style={styles.checkboxMark}>✓</Text>}
+              </View>
+              <Text style={styles.checkLabel}>
+                Recordar sesión en este dispositivo
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => navigation.navigate("Recover")}
+            >
+              <Text style={styles.recoverLink}>
+                ¿Olvidaste tu contraseña?
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
-            style={styles.checkRow}
-            onPress={() => setRemember(!remember)}
+            style={[styles.mainButton, loading && styles.mainButtonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
           >
-            <View style={[styles.checkbox, remember && styles.checkboxChecked]}>
-              {remember && <Text style={styles.checkboxMark}>âœ“</Text>}
-            </View>
-            <Text style={styles.checkLabel}>Recordar sesiÃ³n en este dispositivo</Text>
+            <Text style={styles.mainButtonText}>
+              {loading ? "Entrando..." : "Entrar"}
+            </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => navigation.navigate("Recover")}>
-            <Text style={styles.recoverLink}>Â¿Olvidaste tu contraseÃ±a?</Text>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => navigation.navigate("Register")}
+          >
+            <Text style={styles.secondaryText}>Crear cuenta nueva</Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity
-          style={[styles.mainButton, loading && styles.mainButtonDisabled]}
-          onPress={handleLogin}
-          disabled={loading}
-        >
-          <Text style={styles.mainButtonText}>
-            {loading ? "Entrando..." : "Entrar"}
-          </Text>
-        </TouchableOpacity>
+        <Text style={styles.info}>
+          Calmward no es un servicio médico ni de emergencias. Si estás en
+          peligro, busca ayuda directa.
+        </Text>
 
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={() => navigation.navigate("Register")}
-        >
-          <Text style={styles.secondaryText}>Crear cuenta nueva</Text>
-        </TouchableOpacity>
-      </View>
-
-      <Text style={styles.info}>
-        Calmward no es un servicio mÃ©dico ni de emergencias. Si estÃ¡s en
-        peligro, busca ayuda directa.
-      </Text>
-    </View>
+        <AppFooter />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -133,8 +154,12 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: "#020617",
+  },
+  scrollContent: {
+    flexGrow: 1,
     padding: 20,
     justifyContent: "center",
+    paddingBottom: 32,
   },
   card: {
     backgroundColor: "#0f172a",

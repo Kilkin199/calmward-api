@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import {
+  SafeAreaView,
+  ScrollView,
   View,
   Text,
   TextInput,
@@ -11,6 +13,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/MainNavigation";
 import { registerUser } from "../api/authApi";
 import AppLogo from "../components/AppLogo";
+import AppFooter from "../components/AppFooter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Register">;
 
@@ -28,7 +31,7 @@ export default function RegisterScreen({ navigation }: Props) {
     const cleanPassword = password.trim();
 
     if (!cleanName || !cleanEmail || !cleanPassword) {
-      Alert.alert("Calmward", "Rellena nombre, correo y contraseÃ±a.");
+      Alert.alert("Calmward", "Rellena nombre, correo y contraseña.");
       return;
     }
     if (!acceptTerms) {
@@ -49,13 +52,16 @@ export default function RegisterScreen({ navigation }: Props) {
       if (!data || !data.ok) {
         Alert.alert(
           "No se pudo crear la cuenta",
-          data?.error || "Prueba con otro correo o intÃ©ntalo mÃ¡s tarde."
+          data?.error || "Prueba con otro correo o inténtalo más tarde."
         );
         return;
       }
 
-      Alert.alert("Cuenta creada", "Ahora puedes iniciar sesiÃ³n.", [
-        { text: "Ir a iniciar sesiÃ³n", onPress: () => navigation.navigate("Login") },
+      Alert.alert("Cuenta creada", "Ahora puedes iniciar sesión.", [
+        {
+          text: "Ir a iniciar sesión",
+          onPress: () => navigation.navigate("Login"),
+        },
       ]);
     } catch (e: any) {
       Alert.alert(
@@ -68,90 +74,97 @@ export default function RegisterScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.root}>
-      <View style={styles.card}>
-        <AppLogo size="md" showText />
+    <SafeAreaView style={styles.root}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.card}>
+          <AppLogo size="md" showText />
 
-        <Text style={styles.title}>Crear cuenta</Text>
-        <Text style={styles.subtitle}>
-          Crea tu espacio en Calmward para poder guardar tu recorrido y hablar
-          con la IA cuando lo necesites.
-        </Text>
+          <Text style={styles.title}>Crear cuenta</Text>
+          <Text style={styles.subtitle}>
+            Crea tu espacio en Calmward para poder guardar tu recorrido y hablar
+            con la IA cuando lo necesites.
+          </Text>
 
-        <Text style={styles.label}>Nombre</Text>
-        <TextInput
-          style={styles.input}
-          value={name}
-          onChangeText={setName}
-          placeholder="CÃ³mo quieres que te llamemos"
-          placeholderTextColor="#6b7280"
-        />
+          <Text style={styles.label}>Nombre</Text>
+          <TextInput
+            style={styles.input}
+            value={name}
+            onChangeText={setName}
+            placeholder="Cómo quieres que te llamemos"
+            placeholderTextColor="#6b7280"
+          />
 
-        <Text style={styles.label}>PaÃ­s (opcional)</Text>
-        <TextInput
-          style={styles.input}
-          value={country}
-          onChangeText={setCountry}
-          placeholder="EspaÃ±a, MÃ©xico..."
-          placeholderTextColor="#6b7280"
-        />
+          <Text style={styles.label}>País (opcional)</Text>
+          <TextInput
+            style={styles.input}
+            value={country}
+            onChangeText={setCountry}
+            placeholder="España, México..."
+            placeholderTextColor="#6b7280"
+          />
 
-        <Text style={styles.label}>Correo electrÃ³nico</Text>
-        <TextInput
-          style={styles.input}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-          placeholder="tucorreo@example.com"
-          placeholderTextColor="#6b7280"
-        />
+          <Text style={styles.label}>Correo electrónico</Text>
+          <TextInput
+            style={styles.input}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="tucorreo@example.com"
+            placeholderTextColor="#6b7280"
+          />
 
-        <Text style={styles.label}>ContraseÃ±a</Text>
-        <TextInput
-          style={styles.input}
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-          placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-          placeholderTextColor="#6b7280"
-        />
+          <Text style={styles.label}>Contraseña</Text>
+          <TextInput
+            style={styles.input}
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            placeholder="••••••••"
+            placeholderTextColor="#6b7280"
+          />
 
-        <TouchableOpacity
-          style={styles.checkRow}
-          onPress={() => setAcceptTerms(!acceptTerms)}
-        >
-          <View
-            style={[
-              styles.checkbox,
-              acceptTerms && styles.checkboxChecked,
-            ]}
+          <TouchableOpacity
+            style={styles.checkRow}
+            onPress={() => setAcceptTerms(!acceptTerms)}
           >
-            {acceptTerms && <Text style={styles.checkboxMark}>âœ“</Text>}
-          </View>
-          <Text style={styles.checkLabel}>
-            Acepto el tratamiento de datos y las condiciones de uso.
-          </Text>
-        </TouchableOpacity>
+            <View
+              style={[
+                styles.checkbox,
+                acceptTerms && styles.checkboxChecked,
+              ]}
+            >
+              {acceptTerms && <Text style={styles.checkboxMark}>✓</Text>}
+            </View>
+            <Text style={styles.checkLabel}>
+              Acepto el tratamiento de datos y las condiciones de uso.
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.mainButton, loading && styles.mainButtonDisabled]}
-          onPress={handleRegister}
-          disabled={loading}
-        >
-          <Text style={styles.mainButtonText}>
-            {loading ? "Creando..." : "Crear cuenta"}
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.mainButton, loading && styles.mainButtonDisabled]}
+            onPress={handleRegister}
+            disabled={loading}
+          >
+            <Text style={styles.mainButtonText}>
+              {loading ? "Creando..." : "Crear cuenta"}
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={() => navigation.navigate("Login")}
-        >
-          <Text style={styles.secondaryText}>Ya tengo cuenta</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => navigation.navigate("Login")}
+          >
+            <Text style={styles.secondaryText}>Ya tengo cuenta</Text>
+          </TouchableOpacity>
+        </View>
+
+        <AppFooter />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -159,8 +172,12 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: "#020617",
+  },
+  scrollContent: {
+    flexGrow: 1,
     padding: 20,
     justifyContent: "center",
+    paddingBottom: 32,
   },
   card: {
     backgroundColor: "#0f172a",

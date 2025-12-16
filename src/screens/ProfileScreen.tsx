@@ -1,8 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
+import {
+  SafeAreaView,
+  ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+} from "react-native";
 import { logoutUser, getStoredUser } from "../api/authApi";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/MainNavigation";
+import AppFooter from "../components/AppFooter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
 
@@ -23,7 +32,7 @@ export default function ProfileScreen({ navigation }: Props) {
 
   async function handleLogout() {
     await logoutUser();
-    Alert.alert("SesiÃ³n cerrada", "Se ha cerrado la sesiÃ³n en este dispositivo.");
+    Alert.alert("Sesión cerrada", "Se ha cerrado la sesión en este dispositivo.");
     navigation.reset({
       index: 0,
       routes: [{ name: "Home" }],
@@ -31,26 +40,39 @@ export default function ProfileScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.root}>
-      <Text style={styles.title}>Perfil</Text>
+    <SafeAreaView style={styles.root}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+      >
+        <Text style={styles.title}>Perfil</Text>
 
-      <View style={styles.card}>
-        <Text style={styles.label}>Nombre</Text>
-        <Text style={styles.value}>{userName || "Sin nombre configurado"}</Text>
+        <View style={styles.card}>
+          <Text style={styles.label}>Nombre</Text>
+          <Text style={styles.value}>
+            {userName || "Sin nombre configurado"}
+          </Text>
 
-        <Text style={styles.label}>Correo</Text>
-        <Text style={styles.value}>{userEmail || "Sin correo disponible"}</Text>
-      </View>
+          <Text style={styles.label}>Correo</Text>
+          <Text style={styles.value}>
+            {userEmail || "Sin correo disponible"}
+          </Text>
+        </View>
 
-      <Text style={styles.text}>
-        En futuras versiones podrÃ¡s configurar notificaciones, contactos de
-        confianza y mÃ¡s opciones de privacidad.
-      </Text>
+        <Text style={styles.text}>
+          En futuras versiones podrás configurar notificaciones, contactos de
+          confianza y más opciones de privacidad.
+        </Text>
 
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Text style={styles.logoutText}>Cerrar sesiÃ³n en este dispositivo</Text>
-      </TouchableOpacity>
-    </View>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <Text style={styles.logoutText}>
+            Cerrar sesión en este dispositivo
+          </Text>
+        </TouchableOpacity>
+
+        <AppFooter />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -58,8 +80,14 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: "#020617",
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
     paddingHorizontal: 16,
     paddingTop: 16,
+    paddingBottom: 32,
   },
   title: {
     fontSize: 22,
@@ -95,6 +123,7 @@ const styles = StyleSheet.create({
     borderColor: "#f97373",
     paddingVertical: 10,
     alignItems: "center",
+    marginBottom: 24,
   },
   logoutText: {
     color: "#fecaca",

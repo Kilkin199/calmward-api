@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
+  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -8,6 +9,7 @@ import {
   ScrollView,
   Alert,
 } from "react-native";
+import AppFooter from "../components/AppFooter";
 import { saveDay, getSummary } from "../api/statsApi";
 
 type Entry = {
@@ -51,7 +53,10 @@ export default function TuDiaScreen() {
       setSaving(true);
       const res = await saveDay(level, note.trim());
       if (res?.ok === false) {
-        Alert.alert("No se pudo guardar", res.error || "IntÃ©ntalo mÃ¡s tarde.");
+        Alert.alert(
+          "No se pudo guardar",
+          res.error || "Inténtalo más tarde."
+        );
       }
       await loadSummary();
       setNote("");
@@ -66,19 +71,19 @@ export default function TuDiaScreen() {
   }
 
   return (
-    <View style={styles.root}>
+    <SafeAreaView style={styles.root}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: 32 }}
       >
-        <Text style={styles.title}>Tu dÃ­a</Text>
+        <Text style={styles.title}>Tu día</Text>
         <Text style={styles.subtitle}>
-          Marca cÃ³mo estÃ¡s hoy y, si quieres, aÃ±ade unas palabras. No es un
+          Marca cómo estás hoy y, si quieres, añade unas palabras. No es un
           examen, solo un registro para ti.
         </Text>
 
         <View style={styles.card}>
-          <Text style={styles.label}>Â¿CÃ³mo te sientes ahora mismo?</Text>
+          <Text style={styles.label}>¿Cómo te sientes ahora mismo?</Text>
           <View style={styles.levelRow}>
             {[1, 2, 3, 4, 5].map((v) => (
               <TouchableOpacity
@@ -101,7 +106,7 @@ export default function TuDiaScreen() {
             ))}
           </View>
 
-          <Text style={styles.labelSmall}>Â¿Quieres aÃ±adir algo?</Text>
+          <Text style={styles.labelSmall}>¿Quieres añadir algo?</Text>
           <TextInput
             style={styles.input}
             multiline
@@ -117,25 +122,24 @@ export default function TuDiaScreen() {
             disabled={saving}
           >
             <Text style={styles.saveButtonText}>
-              {saving ? "Guardando..." : "Guardar dÃ­a de hoy"}
+              {saving ? "Guardando..." : "Guardar día de hoy"}
             </Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.historyHeader}>
-          <Text style={styles.historyTitle}>Ãšltimos registros</Text>
+          <Text style={styles.historyTitle}>Últimos registros</Text>
           {loading && <Text style={styles.historyLoading}>Cargando...</Text>}
         </View>
 
         <View style={styles.historyList}>
           {!loading && entries.length === 0 && (
             <Text style={styles.historyEmpty}>
-              Cuando empieces a guardar, verÃ¡s aquÃ­ un pequeÃ±o historial.
+              Cuando empieces a guardar, verás aquí un pequeño historial.
             </Text>
           )}
           {entries.map((e, index) => {
-            const created =
-              e.createdAt || new Date().toISOString();
+            const created = e.createdAt || new Date().toISOString();
             const d = new Date(created);
             const formatted = d.toLocaleDateString("es-ES", {
               weekday: "short",
@@ -163,11 +167,13 @@ export default function TuDiaScreen() {
         </View>
 
         <Text style={styles.footerText}>
-          Hay dÃ­as buenos, malos y raros. Que los puedas ver en conjunto a veces
-          ayuda a entender que nada dura para siempre.
+          Hay días buenos, malos y raros. Verlos en conjunto a veces ayuda a
+          entender que nada dura para siempre.
         </Text>
+
+        <AppFooter />
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

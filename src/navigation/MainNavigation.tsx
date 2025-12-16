@@ -4012,11 +4012,21 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+      },
+      android: {
+        elevation: 2,
+      },
+      web: {
+        // @ts-ignore
+        boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+      },
+    }),
   },
   sectionTitle: {
     fontSize: 20,
@@ -4095,11 +4105,21 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+      },
+      android: {
+        elevation: 2,
+      },
+      web: {
+        // @ts-ignore
+        boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+      },
+    }),
   },
   authWelcome: {
     fontSize: 22,
@@ -4127,11 +4147,21 @@ const styles = StyleSheet.create({
   },
   authTabActive: {
     backgroundColor: "#FFFFFF",
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: {
+        elevation: 1,
+      },
+      web: {
+        // @ts-ignore – RN Web no tipa boxShadow pero funciona
+        boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+      },
+    }),
   },
   authTabText: {
     fontSize: 13,

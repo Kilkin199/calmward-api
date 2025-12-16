@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import {
+  SafeAreaView,
+  ScrollView,
   View,
   Text,
   TextInput,
@@ -10,6 +12,7 @@ import {
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/MainNavigation";
 import { recoverPassword } from "../api/authApi";
+import AppFooter from "../components/AppFooter";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Recover">;
 
@@ -30,7 +33,7 @@ export default function RecoverScreen({ navigation }: Props) {
       Alert.alert(
         "Revisa tu correo",
         data?.message ||
-          "Si el correo existe en el sistema, se enviarÃ¡n instrucciones."
+          "Si el correo existe en el sistema, se enviarán instrucciones."
       );
       navigation.goBack();
     } catch (e: any) {
@@ -44,43 +47,50 @@ export default function RecoverScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.root}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Recuperar contraseÃ±a</Text>
-        <Text style={styles.subtitle}>
-          Escribe tu correo y, si existe en el sistema, se te enviarÃ¡n
-          instrucciones para recuperar el acceso.
-        </Text>
-
-        <Text style={styles.label}>Correo electrÃ³nico</Text>
-        <TextInput
-          style={styles.input}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-          placeholder="tucorreo@example.com"
-          placeholderTextColor="#6b7280"
-        />
-
-        <TouchableOpacity
-          style={[styles.mainButton, loading && styles.mainButtonDisabled]}
-          onPress={handleRecover}
-          disabled={loading}
-        >
-          <Text style={styles.mainButtonText}>
-            {loading ? "Enviando..." : "Enviar instrucciones"}
+    <SafeAreaView style={styles.root}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.card}>
+          <Text style={styles.title}>Recuperar contraseña</Text>
+          <Text style={styles.subtitle}>
+            Escribe tu correo y, si existe en el sistema, se te enviarán
+            instrucciones para recuperar el acceso.
           </Text>
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.secondaryText}>Volver</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          <Text style={styles.label}>Correo electrónico</Text>
+          <TextInput
+            style={styles.input}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="tucorreo@example.com"
+            placeholderTextColor="#6b7280"
+          />
+
+          <TouchableOpacity
+            style={[styles.mainButton, loading && styles.mainButtonDisabled]}
+            onPress={handleRecover}
+            disabled={loading}
+          >
+            <Text style={styles.mainButtonText}>
+              {loading ? "Enviando..." : "Enviar instrucciones"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.secondaryText}>Volver</Text>
+          </TouchableOpacity>
+        </View>
+
+        <AppFooter />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -88,8 +98,12 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: "#020617",
+  },
+  scrollContent: {
+    flexGrow: 1,
     padding: 20,
     justifyContent: "center",
+    paddingBottom: 32,
   },
   card: {
     backgroundColor: "#0f172a",
