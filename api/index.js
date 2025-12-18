@@ -159,6 +159,10 @@ async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- NUEVO: columna cta_label para alinearse con el SELECT a.cta_label
+    ALTER TABLE sponsor_ads
+      ADD COLUMN IF NOT EXISTS cta_label TEXT DEFAULT 'Ver más';
+
     CREATE UNIQUE INDEX IF NOT EXISTS sponsor_ads_user_id_idx
       ON sponsor_ads(user_id);
   `;
@@ -442,7 +446,9 @@ app.post("/auth/register-and-login", async (req, res) => {
       userRow = existing.rows[0];
       const ok = await bcrypt.compare(plainPass, userRow.password_hash);
       if (!ok) {
-        return res.status(401).json({ error: "Correo o contraseña incorrectos." });
+        return res
+          .status(401)
+          .json({ error: "Correo o contraseña incorrectos." });
       }
     } else {
       const hash = await bcrypt.hash(plainPass, 10);
@@ -481,7 +487,9 @@ app.post("/auth/register-and-login", async (req, res) => {
     });
   } catch (err) {
     console.error("Error en /auth/register-and-login:", err);
-    return res.status(500).json({ error: "Problema al crear o iniciar sesión." });
+    return res
+      .status(500)
+      .json({ error: "Problema al crear o iniciar sesión." });
   }
 });
 
@@ -498,7 +506,9 @@ app.post("/auth/login", async (req, res) => {
     const plainPass = String(password || "");
 
     if (!normEmail || !normEmail.includes("@") || !plainPass) {
-      return res.status(400).json({ error: "Debes indicar correo y contraseña." });
+      return res
+        .status(400)
+        .json({ error: "Debes indicar correo y contraseña." });
     }
 
     const q = await pool.query(
@@ -515,7 +525,9 @@ app.post("/auth/login", async (req, res) => {
     );
 
     if (q.rows.length === 0) {
-      return res.status(401).json({ error: "No existe ninguna cuenta con ese correo." });
+      return res.status(401).json({
+        error: "No existe ninguna cuenta con ese correo.",
+      });
     }
 
     const userRow = q.rows[0];
@@ -526,7 +538,9 @@ app.post("/auth/login", async (req, res) => {
 
     const ok = await bcrypt.compare(plainPass, userRow.password_hash);
     if (!ok) {
-      return res.status(401).json({ error: "Correo o contraseña incorrectos." });
+      return res
+        .status(401)
+        .json({ error: "Correo o contraseña incorrectos." });
     }
 
     const token = randomToken();
@@ -669,7 +683,9 @@ app.post("/community/posts/:id/like", async (req, res) => {
     const { user } = auth;
 
     if (user.community_banned) {
-      return res.status(403).json({ error: "Tu cuenta está bloqueada en Comunidad." });
+      return res
+        .status(403)
+        .json({ error: "Tu cuenta está bloqueada en Comunidad." });
     }
 
     const postId = parseInt(req.params.id, 10);
@@ -716,7 +732,9 @@ app.post("/community/posts/:id/comments", async (req, res) => {
     const { user } = auth;
 
     if (user.community_banned) {
-      return res.status(403).json({ error: "Tu cuenta está bloqueada en Comunidad." });
+      return res
+        .status(403)
+        .json({ error: "Tu cuenta está bloqueada en Comunidad." });
     }
 
     const postId = parseInt(req.params.id, 10);
@@ -793,8 +811,9 @@ app.get("/community/posts/:id/comments", async (req, res) => {
 
 app.post("/ai/talk", async (req, res) => {
   try {
-	  const auth = await getUserFromRequestOrThrow(req, res);
+    const auth = await getUserFromRequestOrThrow(req, res);
     if (!auth) return;
+
     if (!GROQ_API_KEY) {
       return res.status(500).json({
         error: "Falta GROQ_API_KEY en el servidor. Configúrala en Render.",
@@ -806,15 +825,10 @@ app.post("/ai/talk", async (req, res) => {
       return res.status(400).json({ error: "Falta 'message'." });
     }
 
-    if (mode === "ayudame_a_ordenar") {
-      const auth = await getUserFromRequestOrThrow(req, res);
-      if (!auth) return;
-
-      if (!isPremiumActive(auth.user)) {
-        return res.status(403).json({
-          error: "Esta función requiere Calmward Premium.",
-        });
-      }
+    if (mode === "ayudame_a_ordenar" && !isPremiumActive(auth.user)) {
+      return res.status(403).json({
+        error: "Esta función requiere Calmward Premium.",
+      });
     }
 
     const systemPrompt =
@@ -920,7 +934,6 @@ app.patch("/admin/users/:id", async (req, res) => {
 
     const body = req.body || {};
 
-    // helper para normalizar booleanos
     function toBool(v) {
       return v === true || v === "true" || v === 1 || v === "1";
     }
@@ -1040,181 +1053,6 @@ app.delete("/admin/posts/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ================= SPONSOR ADS (CARRUSEL) ================= */
-
-// Anuncios que se mostrarán en el carrusel de Inicio
-app.get("/sponsors/ads", async (_req, res) => {
-  try {
-    if (!pool) {
-      return res.status(500).json({ error: "Base de datos no disponible." });
-    }
-
-    const q = await pool.query(
-      `
-        SELECT
-          a.id,
-          a.brand_name,
-          a.tagline,
-          a.description,
-          a.cta,
-          a.url,
-          a.image_url,
-          a.is_active,
-          a.created_at,
-          a.updated_at,
-          u.id AS user_id,
-          u.email,
-          u.is_sponsor
-        FROM sponsor_ads a
-        JOIN users u ON u.id = a.user_id
-        WHERE a.is_active = TRUE
-          AND u.is_sponsor = TRUE
-        ORDER BY a.created_at DESC
-      `
-    );
-
-    const ads = q.rows || [];
-    return res.json({ ok: true, ads });
-  } catch (err) {
-    console.error("Error en GET /sponsors/ads", err);
-    return res
-      .status(500)
-      .json({ error: "No se han podido cargar los anuncios patrocinados." });
-  }
-});
-
-// Ver anuncio del patrocinador logueado
-app.get("/sponsors/my-ad", async (req, res) => {
-  try {
-    const auth = await getUserFromRequestOrThrow(req, res);
-    if (!auth) return;
-    const u = auth.user;
-
-    if (!u.is_sponsor) {
-      return res.status(403).json({
-        error:
-          "Tu cuenta no tiene patrocinio activo. Contrata un plan de patrocinio para crear tu anuncio.",
-      });
-    }
-
-    const q = await pool.query(
-      `
-        SELECT
-          id,
-          brand_name,
-          tagline,
-          description,
-          cta,
-          url,
-          image_url,
-          is_active,
-          created_at,
-          updated_at
-        FROM sponsor_ads
-        WHERE user_id = $1
-        LIMIT 1
-      `,
-      [u.id]
-    );
-
-    if (!q.rows.length) {
-      return res.json({ ok: true, ad: null });
-    }
-
-    return res.json({ ok: true, ad: q.rows[0] });
-  } catch (err) {
-    console.error("Error en GET /sponsors/my-ad", err);
-    return res
-      .status(500)
-      .json({ error: "No se ha podido cargar tu anuncio." });
-  }
-});
-
-// Crear / actualizar anuncio del patrocinador logueado
-app.post("/sponsors/my-ad", async (req, res) => {
-  try {
-    const auth = await getUserFromRequestOrThrow(req, res);
-    if (!auth) return;
-    const u = auth.user;
-
-    if (!u.is_sponsor) {
-      return res.status(403).json({
-        error:
-          "Tu cuenta no tiene patrocinio activo. Contrata un plan de patrocinio para crear tu anuncio.",
-      });
-    }
-
-    if (!pool) {
-      return res.status(500).json({ error: "Base de datos no disponible." });
-    }
-
-    const body = req.body || {};
-    const brandName = String(body.brandName || body.brand_name || "").trim();
-    const tagline = String(body.tagline || "").trim();
-    const description = String(body.description || "").trim();
-    const cta = String(body.cta || "").trim();
-    const url = String(body.url || "").trim();
-    const imageUrl = String(body.imageUrl || body.image_url || "").trim();
-    const isActive =
-      body.isActive === false || body.is_active === false ? false : true;
-
-    if (!brandName || !url) {
-      return res.status(400).json({
-        error:
-          "Faltan datos obligatorios. Indica al menos nombre de marca y URL de destino.",
-      });
-    }
-
-    const q = await pool.query(
-      `
-        INSERT INTO sponsor_ads (
-          user_id,
-          brand_name,
-          tagline,
-          description,
-          cta,
-          url,
-          image_url,
-          is_active,
-          created_at,
-          updated_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
-        ON CONFLICT (user_id)
-        DO UPDATE SET
-          brand_name = EXCLUDED.brand_name,
-          tagline = EXCLUDED.tagline,
-          description = EXCLUDED.description,
-          cta = EXCLUDED.cta,
-          url = EXCLUDED.url,
-          image_url = EXCLUDED.image_url,
-          is_active = EXCLUDED.is_active,
-          updated_at = NOW()
-        RETURNING
-          id,
-          brand_name,
-          tagline,
-          description,
-          cta,
-          url,
-          image_url,
-          is_active,
-          created_at,
-          updated_at
-      `,
-      [u.id, brandName, tagline, description, cta, url, imageUrl, isActive]
-    );
-
-    return res.json({ ok: true, ad: q.rows[0] });
-  } catch (err) {
-    console.error("Error en POST /sponsors/my-ad", err);
-    return res
-      .status(500)
-      .json({ error: "No se ha podido guardar tu anuncio." });
-  }
-});
-
-
 /* ================= BILLING / PAYPAL (SUBSCRIPTIONS + WEBHOOK) ================= */
 
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
@@ -1305,11 +1143,12 @@ function computeValidUntil(planKey) {
 
 /* ================= SPONSOR ADS (CARRUSEL DE ANUNCIOS) ================= */
 
-// OJO: esto usa isSponsorActive(u) que ya tienes definido para el billing.
-// No lo vuelvas a definir, solo reutilízalo aquí.
-
+// Anuncios visibles en el carrusel de Inicio
+// - Solo anuncios marcados como is_active = TRUE
+// - Solo usuarios con patrocinio activo (is_sponsor + sponsor_valid_until)
 app.get("/sponsor/ads", async (_req, res) => {
   if (!pool) {
+    // Sin DB devolvemos lista vacía para no romper el front
     return res.json({ ads: [] });
   }
 
@@ -1321,8 +1160,8 @@ app.get("/sponsor/ads", async (_req, res) => {
         a.brand_name,
         a.tagline,
         a.description,
-        a.cta_label,
-        a.target_url,
+        a.cta,
+        a.url,
         a.image_url,
         a.is_active,
         a.updated_at,
@@ -1341,13 +1180,15 @@ app.get("/sponsor/ads", async (_req, res) => {
       `
     );
 
+    // Adaptamos al formato que espera el front:
+    // { id, name, tagline, description, cta, url, imageUrl }
     const items = (q.rows || []).map((row) => ({
       id: row.id,
-      brandName: row.brand_name,
+      name: row.brand_name,
       tagline: row.tagline,
       description: row.description,
-      ctaLabel: row.cta_label,
-      targetUrl: row.target_url,
+      cta: row.cta,
+      url: row.url,
       imageUrl: row.image_url,
     }));
 
@@ -1379,8 +1220,8 @@ app.get("/sponsor/my-ad", async (req, res) => {
         brand_name,
         tagline,
         description,
-        cta_label,
-        target_url,
+        cta,
+        url,
         image_url,
         is_active
       FROM sponsor_ads
@@ -1402,8 +1243,8 @@ app.get("/sponsor/my-ad", async (req, res) => {
         brandName: row.brand_name,
         tagline: row.tagline,
         description: row.description,
-        ctaLabel: row.cta_label,
-        targetUrl: row.target_url,
+        ctaLabel: row.cta,
+        targetUrl: row.url,
         imageUrl: row.image_url,
         isActive: row.is_active,
       },
@@ -1416,7 +1257,10 @@ app.get("/sponsor/my-ad", async (req, res) => {
   }
 });
 
-// Crea o actualiza el anuncio del usuario sponsor
+// Crea o actualiza el anuncio del usuario sponsor.
+// - El usuario sponsor puede editar los datos (texto, imagen, url).
+// - La ACTIVACIÓN la dejamos en manos del admin: por defecto is_active = false,
+//   salvo que el usuario actual sea admin.
 app.post("/sponsor/my-ad", async (req, res) => {
   const auth = await getUserFromRequestOrThrow(req, res);
   if (!auth) return;
@@ -1444,7 +1288,10 @@ app.post("/sponsor/my-ad", async (req, res) => {
   const cta = String(ctaLabel || "").trim() || "Más información";
   const url = String(targetUrl || "").trim();
   const img = String(imageUrl || "").trim();
-  const active = isActive === false ? false : true;
+
+  // Solo un admin puede activar directamente el anuncio
+  const isAdmin = !!auth.user.is_admin;
+  const active = isAdmin && isActive === true ? true : false;
 
   if (!bName || !desc) {
     return res.status(400).json({
@@ -1476,8 +1323,8 @@ app.post("/sponsor/my-ad", async (req, res) => {
           brand_name = $1,
           tagline = $2,
           description = $3,
-          cta_label = $4,
-          target_url = $5,
+          cta = $4,
+          url = $5,
           image_url = $6,
           is_active = $7,
           updated_at = NOW()
@@ -1489,7 +1336,7 @@ app.post("/sponsor/my-ad", async (req, res) => {
       const insert = await pool.query(
         `
         INSERT INTO sponsor_ads
-          (user_id, brand_name, tagline, description, cta_label, target_url, image_url, is_active)
+          (user_id, brand_name, tagline, description, cta, url, image_url, is_active)
         VALUES
           ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
@@ -1502,6 +1349,10 @@ app.post("/sponsor/my-ad", async (req, res) => {
     return res.json({
       ok: true,
       id: adId,
+      isActive: active,
+      note: isAdmin
+        ? "Anuncio actualizado. Activación aplicada por admin."
+        : "Anuncio guardado. Debe ser aprobado por un administrador para mostrarse en el carrusel.",
     });
   } catch (err) {
     console.error("Error en POST /sponsor/my-ad:", err);
@@ -1511,376 +1362,80 @@ app.post("/sponsor/my-ad", async (req, res) => {
   }
 });
 
-app.get("/billing/plans", async (_req, res) => {
-  const plans = Object.keys(PLAN_CATALOG).map((k) => ({
-    planKey: k,
-    label: PLAN_CATALOG[k].label,
-    price: PLAN_CATALOG[k].price,
-    hasPlanId: !!PLAN_ID_MAP[k],
-  }));
+// Lista anuncios pendientes (is_active = FALSE) con datos básicos
+app.get("/admin/sponsor/pending", async (req, res) => {
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+  if (!auth.user.is_admin) {
+    return res
+      .status(403)
+      .json({ error: "Solo un administrador puede ver esto." });
+  }
 
-  res.json({ ok: true, env: PAYPAL_ENV, plans });
-});
-
-app.post("/billing/paypal/create-subscription", async (req, res) => {
   try {
-    const auth = await getUserFromRequestOrThrow(req, res);
-    if (!auth) return;
+    const q = await pool.query(
+      `
+      SELECT
+        a.id,
+        a.brand_name,
+        a.tagline,
+        a.description,
+        a.cta,
+        a.url,
+        a.image_url,
+        a.created_at,
+        u.email AS user_email
+      FROM sponsor_ads a
+      JOIN users u ON u.id = a.user_id
+      WHERE a.is_active = FALSE
+      ORDER BY a.created_at DESC
+      `
+    );
 
-    const { planKey } = req.body || {};
-    const key = String(planKey || "").trim();
-
-    if (!key || !PLAN_CATALOG[key]) {
-      return res.status(400).json({
-        error:
-          "Plan inválido. Usa sponsor_monthly, sponsor_yearly, premium_monthly o premium_yearly.",
-      });
-    }
-
-    const planId = PLAN_ID_MAP[key];
-    if (!planId) {
-      return res.status(500).json({
-        error: "Falta plan_id en el servidor. Revisa PAYPAL_PLAN_* en Render.",
-      });
-    }
-
-    const accessToken = await getPayPalAccessToken();
-
-    const body = {
-      plan_id: planId,
-      custom_id: key,
-      application_context: {
-        brand_name: "Calmward",
-        user_action: "SUBSCRIBE_NOW",
-        return_url: PAYPAL_RETURN_URL,
-        cancel_url: PAYPAL_CANCEL_URL,
-      },
-    };
-
-    const subRes = await fetch(`${PAYPAL_API_BASE}/v1/billing/subscriptions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!subRes.ok) {
-      const text = await subRes.text().catch(() => "");
-      console.error("Error creando Subscription:", subRes.status, text);
-      return res.status(500).json({
-        error: "No se ha podido crear la suscripción en PayPal.",
-      });
-    }
-
-    const subData = await subRes.json().catch(() => ({}));
-    const approveLink =
-      (subData.links || []).find((l) => l.rel === "approve") || null;
-
-    if (pool && subData.id) {
-      await pool.query(
-        `
-          INSERT INTO paypal_subscriptions (user_id, plan_key, paypal_subscription_id, status)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (paypal_subscription_id) DO NOTHING
-        `,
-        [auth.user.id, key, subData.id, subData.status || "CREATED"]
-      );
-    }
-
-    return res.json({
-      ok: true,
-      subscriptionId: subData.id || null,
-      status: subData.status || null,
-      approveUrl: approveLink ? approveLink.href : null,
-      planKey: key,
-      label: PLAN_CATALOG[key].label,
-      price: PLAN_CATALOG[key].price,
-    });
+    return res.json({ pending: q.rows || [] });
   } catch (err) {
-    console.error("Error en create-subscription:", err);
-    return res.status(500).json({
-      error: "No se ha podido iniciar la suscripción con PayPal.",
-    });
+    console.error("Error en /admin/sponsor/pending:", err);
+    return res
+      .status(500)
+      .json({ error: "No se han podido cargar los anuncios pendientes." });
   }
 });
 
-app.post("/billing/paypal/confirm-subscription", async (req, res) => {
+// Aprueba o desactiva un anuncio concreto
+app.post("/admin/sponsor/set-status", async (req, res) => {
+  const auth = await getUserFromRequestOrThrow(req, res);
+  if (!auth) return;
+  if (!auth.user.is_admin) {
+    return res
+      .status(403)
+      .json({ error: "Solo un administrador puede cambiar el estado." });
+  }
+
+  const { adId, status } = req.body || {};
+  const idNum = Number(adId);
+
+  if (!idNum || !status) {
+    return res.status(400).json({ error: "Faltan adId o status." });
+  }
+
+  const isActive = status === "approved";
+
   try {
-    const auth = await getUserFromRequestOrThrow(req, res);
-    if (!auth) return;
-
-    const { subscriptionId, planKey } = req.body || {};
-    const subId = String(subscriptionId || "").trim();
-    const key = String(planKey || "").trim();
-
-    if (!subId || !key || !PLAN_CATALOG[key]) {
-      return res.status(400).json({
-        error: "Datos inválidos. Falta subscriptionId o planKey.",
-      });
-    }
-
-    const accessToken = await getPayPalAccessToken();
-
-    const getRes = await fetch(
-      `${PAYPAL_API_BASE}/v1/billing/subscriptions/${subId}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    if (!getRes.ok) {
-      const text = await getRes.text().catch(() => "");
-      console.error("Error leyendo Subscription:", getRes.status, text);
-      return res.status(500).json({
-        error: "No se pudo verificar la suscripción en PayPal.",
-      });
-    }
-
-    const subData = await getRes.json().catch(() => ({}));
-    const status = String(subData.status || "");
-
-    if (pool) {
-      await pool.query(
-        `
-          UPDATE paypal_subscriptions
-          SET status = $1, updated_at = NOW()
-          WHERE paypal_subscription_id = $2
-        `,
-        [status || "PENDING", subId]
-      );
-    }
-
-    if (status !== "ACTIVE") {
-      return res.status(400).json({
-        error: "La suscripción aún no está activa en PayPal.",
-        status,
-      });
-    }
-
-    const validUntil = computeValidUntil(key);
-    const isSponsor = key.startsWith("sponsor_");
-    const isPremium = key.startsWith("premium_");
-
-    // Actualiza flags + última compra
-    // y SOLO la fecha específica del rol
     await pool.query(
       `
-        UPDATE users
-        SET
-          is_sponsor = CASE WHEN $2 THEN TRUE ELSE is_sponsor END,
-          is_premium = CASE WHEN $3 THEN TRUE ELSE is_premium END,
-          subscription_type = $4,
-          premium_valid_until = CASE WHEN $3 THEN $5 ELSE premium_valid_until END,
-          sponsor_valid_until = CASE WHEN $2 THEN $5 ELSE sponsor_valid_until END
-        WHERE id = $1
+      UPDATE sponsor_ads
+      SET is_active = $1, updated_at = NOW()
+      WHERE id = $2
       `,
-      [auth.user.id, isSponsor, isPremium, key, validUntil.toISOString()]
+      [isActive, idNum]
     );
 
-    return res.json({
-      ok: true,
-      planKey: key,
-      label: PLAN_CATALOG[key].label,
-      price: PLAN_CATALOG[key].price,
-      paypalStatus: status,
-      validUntil: validUntil.toISOString(),
-      isSponsor,
-      isPremium,
-    });
+    return res.json({ ok: true, adId: idNum, isActive });
   } catch (err) {
-    console.error("Error en confirm-subscription:", err);
-    return res.status(500).json({
-      error: "No se ha podido confirmar la suscripción.",
-    });
-  }
-});
-
-app.get("/billing/subscription", async (req, res) => {
-  try {
-    const auth = await getUserFromRequestOrThrow(req, res);
-    if (!auth) return;
-    const u = auth.user;
-
-    return res.json({
-      ok: true,
-      email: u.email,
-      isSponsor: !!u.is_sponsor,
-      isSponsorActive: isSponsorActive(u),
-      isPremium: !!u.is_premium,
-      isPremiumActive: isPremiumActive(u),
-      subscriptionType: u.subscription_type || null,
-      premiumValidUntil: u.premium_valid_until || null,
-      sponsorValidUntil: u.sponsor_valid_until || null,
-    });
-  } catch (err) {
-    console.error("Error en /billing/subscription:", err);
-    return res.status(500).json({
-      error: "No se pudo cargar la información de suscripción.",
-    });
-  }
-});
-
-// ===================== WEBHOOK PAYPAL =====================
-
-async function verifyPayPalWebhookSignature(req) {
-  if (!PAYPAL_WEBHOOK_ID) {
-    console.warn("[PayPal Webhook] Falta PAYPAL_WEBHOOK_ID.");
-    return false;
-  }
-
-  const transmissionId = req.headers["paypal-transmission-id"];
-  const transmissionTime = req.headers["paypal-transmission-time"];
-  const certUrl = req.headers["paypal-cert-url"];
-  const authAlgo = req.headers["paypal-auth-algo"];
-  const transmissionSig = req.headers["paypal-transmission-sig"];
-
-  if (
-    !transmissionId ||
-    !transmissionTime ||
-    !certUrl ||
-    !authAlgo ||
-    !transmissionSig
-  ) {
-    console.warn("[PayPal Webhook] Faltan headers de verificación.");
-    return false;
-  }
-
-  const accessToken = await getPayPalAccessToken();
-
-  const body = {
-    transmission_id: transmissionId,
-    transmission_time: transmissionTime,
-    cert_url: certUrl,
-    auth_algo: authAlgo,
-    transmission_sig: transmissionSig,
-    webhook_id: PAYPAL_WEBHOOK_ID,
-    webhook_event: req.body,
-  };
-
-  const res = await fetch(
-    `${PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    console.error("[PayPal Webhook] Error verificando firma:", res.status, text);
-    return false;
-  }
-
-  const data = await res.json().catch(() => ({}));
-  return data.verification_status === "SUCCESS";
-}
-
-app.post("/webhooks/paypal", async (req, res) => {
-  try {
-    if (!pool) return res.status(200).json({ ok: true, ignored: "no_db" });
-
-    const ok = await verifyPayPalWebhookSignature(req);
-    if (!ok) {
-      return res.status(400).json({ ok: false, error: "Invalid signature" });
-    }
-
-    const event = req.body || {};
-    const type = String(event.event_type || "");
-    const resource = event.resource || {};
-
-    const subscriptionId = String(resource.id || "").trim();
-    if (!subscriptionId) {
-      return res.status(200).json({ ok: true, ignored: "no_subscription_id" });
-    }
-
-    const subQ = await pool.query(
-      `
-        SELECT user_id, plan_key
-        FROM paypal_subscriptions
-        WHERE paypal_subscription_id = $1
-        LIMIT 1
-      `,
-      [subscriptionId]
-    );
-
-    if (subQ.rows.length === 0) {
-      await pool.query(
-        `
-          INSERT INTO paypal_subscriptions (user_id, plan_key, paypal_subscription_id, status)
-          VALUES (NULL, 'unknown', $1, $2)
-          ON CONFLICT (paypal_subscription_id) DO UPDATE
-          SET status = EXCLUDED.status, updated_at = NOW()
-        `,
-        [subscriptionId, type || "UNKNOWN"]
-      );
-      return res.status(200).json({ ok: true, noted: "unknown_local_sub" });
-    }
-
-    const { user_id, plan_key } = subQ.rows[0];
-    const key = String(plan_key || "").trim();
-
-    await pool.query(
-      `
-        UPDATE paypal_subscriptions
-        SET status = $1, updated_at = NOW()
-        WHERE paypal_subscription_id = $2
-      `,
-      [type || "UPDATED", subscriptionId]
-    );
-
-    if (!key || key === "unknown" || !user_id) {
-      return res.status(200).json({ ok: true, updated: "status_only" });
-    }
-
-    const isSponsor = key.startsWith("sponsor_");
-    const isPremium = key.startsWith("premium_");
-
-    if (
-      type === "BILLING.SUBSCRIPTION.ACTIVATED" ||
-      type === "BILLING.SUBSCRIPTION.RENEWED" ||
-      type === "BILLING.SUBSCRIPTION.UPDATED"
-    ) {
-      const validUntil = computeValidUntil(key);
-
-      await pool.query(
-        `
-          UPDATE users
-          SET
-            is_sponsor = CASE WHEN $2 THEN TRUE ELSE is_sponsor END,
-            is_premium = CASE WHEN $3 THEN TRUE ELSE is_premium END,
-            subscription_type = $4,
-            premium_valid_until = CASE WHEN $3 THEN $5 ELSE premium_valid_until END,
-            sponsor_valid_until = CASE WHEN $2 THEN $5 ELSE sponsor_valid_until END
-          WHERE id = $1
-        `,
-        [user_id, isSponsor, isPremium, key, validUntil.toISOString()]
-      );
-
-      return res.status(200).json({ ok: true, applied: "activated/renewed" });
-    }
-
-    if (
-      type === "BILLING.SUBSCRIPTION.CANCELLED" ||
-      type === "BILLING.SUBSCRIPTION.SUSPENDED" ||
-      type === "BILLING.SUBSCRIPTION.EXPIRED"
-    ) {
-      return res.status(200).json({ ok: true, applied: "stopped_status_only" });
-    }
-
-    return res.status(200).json({ ok: true, ignored: "unhandled_type" });
-  } catch (err) {
-    console.error("[PayPal Webhook] Error:", err);
-    return res.status(200).json({ ok: false, logged: true });
+    console.error("Error en /admin/sponsor/set-status:", err);
+    return res
+      .status(500)
+      .json({ error: "No se ha podido actualizar el estado del anuncio." });
   }
 });
 

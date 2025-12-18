@@ -113,31 +113,31 @@ type Sponsor = {
 
 const CTA_SPONSORS: Sponsor[] = [
   {
-    id: "cta-anunciate",
+    id: "cta-sponsor-uno",
     name: "Anúnciate aquí",
     tagline: "Tu proyecto en Calmward",
     description:
       "Reserva una tarjeta en la pantalla de inicio para apps, proyectos o marcas relacionadas con el bienestar emocional.",
     cta: "Quiero anunciarme",
-    url: "https://calmward.app/patrocinio",
+    url: "internal:sponsor",
   },
   {
-    id: "cta-publicitate",
+    id: "cta-sponsor-dos",
     name: "Publicítate en Calmward",
     tagline: "Llega a personas que cuidan su salud emocional",
     description:
       "Tu tarjeta aparece en el carrusel de inicio, con enlace directo a tu web o app.",
     cta: "Más información",
-    url: "https://calmward.app/patrocinio",
+    url: "internal:sponsor",
   },
   {
-    id: "cta-tu-proyecto",
+    id: "cta-sponsor-tres",
     name: "Tu proyecto en Calmward",
     tagline: "Un espacio discreto, sin ruido",
     description:
       "Ideal para apps, podcasts, libros, cursos o servicios de apoyo emocional.",
     cta: "Ver cómo funciona",
-    url: "https://calmward.app/patrocinio",
+    url: "internal:sponsor",
   },
 ];
 
@@ -653,15 +653,29 @@ function HomeScreen({ navigation }: any) {
 
   // Carga opcional de anuncios reales desde la API (cuando la tengas)
   useEffect(() => {
-    if (!API_BASE_URL) return;
+    if (!API_BASE_URL) {
+      console.warn(
+        "[Calmward] API_BASE_URL no está definida; no se cargarán anuncios sponsor."
+      );
+      setApiAds([]);
+      return;
+    }
 
     let cancelled = false;
 
-    (async () => {
+    const loadSponsorAds = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/sponsor/ads`);
+
         if (!res.ok) {
-          // Si 404 o error, simplemente usamos solo las CTA
+          console.warn(
+            "[Calmward] No se pudieron cargar los anuncios sponsor (HTTP " +
+              res.status +
+              ")"
+          );
+          if (!cancelled) {
+            setApiAds([]);
+          }
           return;
         }
 
@@ -686,10 +700,18 @@ function HomeScreen({ navigation }: any) {
         if (!cancelled) {
           setApiAds(normalized);
         }
-      } catch (e) {
-        console.log("Error cargando anuncios patrocinados", e);
+      } catch (err) {
+        console.warn(
+          "[Calmward] Error cargando anuncios sponsor",
+          err
+        );
+        if (!cancelled) {
+          setApiAds([]);
+        }
       }
-    })();
+    };
+
+    loadSponsorAds();
 
     return () => {
       cancelled = true;
@@ -732,6 +754,22 @@ function HomeScreen({ navigation }: any) {
 
   async function handleSponsorOpen(sponsor: Sponsor) {
     await touchActivity();
+
+    const parentNav = navigation.getParent?.() || navigation;
+
+    // 🔹 Caso especial: tarjeta interna "Anúnciate aquí"
+    if (sponsor.id === "cta-sponsor" || sponsor.url === "internal:sponsor") {
+      if (!isLogged) {
+        // No hay sesión → ir a iniciar sesión
+        parentNav.navigate("Auth");
+      } else {
+        // Hay sesión → ir a la pantalla de patrocinios/pago
+        parentNav.navigate("SponsorPayment");
+      }
+      return;
+    }
+
+    // 🔹 Resto de anuncios (los reales, con URL externa)
     if (!sponsor.url) {
       Alert.alert(
         "Patrocinio sin enlace",
@@ -739,6 +777,7 @@ function HomeScreen({ navigation }: any) {
       );
       return;
     }
+
     Linking.openURL(sponsor.url).catch(() => {
       Alert.alert(
         "No se pudo abrir el enlace",
@@ -746,6 +785,7 @@ function HomeScreen({ navigation }: any) {
       );
     });
   }
+
 
   async function handleSponsorPayment() {
     await touchActivity();
@@ -893,8 +933,6 @@ function HomeScreen({ navigation }: any) {
     </SafeAreaView>
   );
 }
-
-
 
 // ---------- TAB: COMUNIDAD (POSTS ANÓNIMOS) ----------
 
